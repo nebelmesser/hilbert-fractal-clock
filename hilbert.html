@@ -1,0 +1,2269 @@
+<!DOCTYPE html>
+<html lang="en" class="fit-mode">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hilbert time map</title>
+  <style>
+    :root {
+      --bg: #000;
+      --fg: #e8e8e8;
+      --muted: #8a8a8a;
+      --btn: #161616;
+      --btn-border: #2a2a2a;
+      --btn-active: #2a3a48;
+      --btn-active-border: #c86a6a;
+      --accent: #e8918e;
+      --input-bg: #111;
+      --past: #a6a6a6;
+      --future: #141414;
+      --cur-past: #c7a4a4;
+      --cur-future: #3a2222;
+      --head: #ff0000;
+      --surplus: #000000;
+      --label: #848484;
+      --label-empty: #5e5e5e;
+      --label-live: #7a7268;
+      --label-live-empty: #7a6c5c;
+      --current-outline: rgba(255, 107, 107, 0.5);
+      --zoom: rgba(255, 196, 72, 0.95);
+      --connector: rgba(240, 180, 41, 0.7);
+      --bound-0: rgba(255, 255, 255, 0.82); /* inherited higher-unit edges on the inset */
+      --bound-1: rgba(255, 255, 255, 0.55); /* coarsest unit on this map */
+      --bound-2: rgba(255, 255, 255, 0.28); /* middle unit */
+      --bound-3: rgba(197, 197, 197, 0.12); /* 3rd-order / finer-than-label hairlines */
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
+      min-height: 100%;
+    }
+    body { padding: 12px 12px 32px; }
+    @media (orientation: landscape) and (max-height: 540px) {
+      html, body {
+        height: 100%;
+        max-height: 100dvh;
+        max-height: 100svh;
+      }
+      body { padding: 6px 10px 8px; }
+      .top-bar { margin-bottom: 6px; }
+      .controls { margin-bottom: 6px; }
+      .controls button { padding: 6px 10px; min-height: 32px; }
+      .caption { margin: 4px 0 6px; }
+    }
+    /* Fit: both maps on the viewport, no page scroll. Today with one panel still uses this chrome. */
+    html.fit-mode, body.fit-mode {
+      height: 100%;
+      max-height: 100dvh;
+      overflow: hidden;
+    }
+    body.fit-mode {
+      display: flex;
+      flex-direction: column;
+      padding: 8px 12px;
+    }
+    body.fit-mode .top-bar { flex: 0 0 auto; margin-bottom: 8px; }
+    body.fit-mode .stage {
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      padding: 8px;
+    }
+    body.fit-mode .caption { margin: 4px 0 0; }
+    body.fit-mode .map-block { margin: 0; }
+    #map-stack.fit-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      max-width: 100%;
+      max-height: 100%;
+      box-sizing: border-box;
+    }
+    #map-stack.fit-row {
+      display: flex;
+      flex-direction: row;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 16px;
+      max-width: 100%;
+      max-height: 100%;
+      box-sizing: border-box;
+    }
+    #map-stack.fit-row .map-block,
+    #map-stack.fit-col .map-block {
+      display: grid;
+      grid-template-rows: 1fr auto;
+      justify-items: center;
+      box-sizing: border-box;
+    }
+    #map-stack.fit-row .map-block .map,
+    #map-stack.fit-col .map-block .map {
+      align-self: center;
+    }
+    .top-bar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 8px 18px;
+      margin: 0 auto 10px;
+    }
+    .top-bar .controls { margin: 0; }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: center;
+      margin: 0 auto 10px;
+    }
+    .controls button {
+      appearance: none;
+      background: var(--btn);
+      color: var(--fg);
+      border: 1px solid var(--btn-border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      min-height: 36px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .controls button[aria-pressed="true"] {
+      background: var(--btn-active);
+      border-color: var(--btn-active-border);
+      color: var(--accent);
+    }
+    .arbitrary {
+      display: none;
+      flex-wrap: nowrap;
+      flex-shrink: 0;
+      gap: 8px;
+      align-items: center;
+      margin: 0;
+    }
+    .arbitrary.open { display: flex; } /* same row as presets when the bar fits; wraps under them otherwise */
+    .arbitrary input {
+      background: var(--input-bg);
+      color: var(--fg);
+      border: 1px solid var(--btn-border);
+      border-radius: 8px;
+      padding: 6px 8px;
+      min-height: 36px;
+      font: inherit;
+      color-scheme: dark;
+    }
+    .stage {
+      position: relative;
+      width: 100%;
+      margin: 0 auto;
+    }
+    .map {
+      position: relative;
+      margin: 0 auto;
+      overflow: visible;
+    }
+    .map.map-zoom {
+      box-shadow: 0 0 0 2px var(--zoom);
+    }
+    .map canvas {
+      display: block;
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+    .map .layer-base { image-rendering: pixelated; image-rendering: crisp-edges; }
+    .caption {
+      margin: 6px 0 14px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+    .connectors {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      pointer-events: none;
+      z-index: 4;
+    }
+    .connectors line {
+      stroke: var(--connector);
+      stroke-width: 1;
+    }
+    .map-block { margin: 0 auto; }
+  </style>
+</head>
+<body class="fit-mode">
+  <div class="top-bar">
+    <div class="controls" id="presets"></div>
+    <div class="arbitrary" id="arbitrary">
+      <input type="date" id="arb-from">
+      <input type="date" id="arb-to">
+    </div>
+  </div>
+  <div class="stage" id="stage">
+    <svg class="connectors" id="connectors"></svg>
+    <div id="map-stack"></div>
+  </div>
+  <script>
+// One-file Hilbert time map. Range → 2D curve. Fit-only. No weeks.
+// Colors live in :root. Inset is a k×k refinement of a parent Hilbert block,
+// 4-connected, cell duration 0.1s / 0.25s / 0.5s / 1s. Yellow frame sits
+// outside the zoom box. Equal Fit tiles; maps keep their grid aspect (letterbox).
+// Today with one panel keeps the natural day picture — do not two-column pack it.
+(function () {
+  "use strict";
+
+  const theme = {};
+  const _cssProbe = document.createElement("canvas");
+  _cssProbe.width = _cssProbe.height = 1;
+  const _cssProbeCtx = _cssProbe.getContext("2d", { willReadFrequently: true });
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function cssPixel(name) {
+    _cssProbeCtx.clearRect(0, 0, 1, 1);
+    _cssProbeCtx.fillStyle = cssVar(name);
+    _cssProbeCtx.fillRect(0, 0, 1, 1);
+    const d = _cssProbeCtx.getImageData(0, 0, 1, 1).data;
+    return (d[3] << 24) | (d[2] << 16) | (d[1] << 8) | d[0];
+  }
+
+  function loadTheme() {
+    theme.past = cssPixel("--past");
+    theme.future = cssPixel("--future");
+    theme.curPast = cssPixel("--cur-past");
+    theme.curFuture = cssPixel("--cur-future");
+    theme.head = cssPixel("--head");
+    theme.surplus = cssPixel("--surplus");
+    theme.label = cssVar("--label");
+    theme.labelEmpty = cssVar("--label-empty");
+    theme.labelLive = cssVar("--label-live");
+    theme.labelLiveEmpty = cssVar("--label-live-empty");
+    theme.currentOutline = cssVar("--current-outline");
+    theme.zoom = cssVar("--zoom");
+    theme.bound0 = cssVar("--bound-0");
+    theme.bound1 = cssVar("--bound-1");
+    theme.bound2 = cssVar("--bound-2");
+    theme.bound3 = cssVar("--bound-3");
+  }
+
+  const MAX_CELLS = 280000; // soft cap for a normal parent grid
+  const MAX_CELLS_HARD = 1000000; // parent may grow to this if it must be 1s-zoomable
+  const MIN_CELLS = 16;
+  const NICE_DURS = [
+    1, 2, 5, 10, 20, 50, 100, 200, 250, 500,
+    1000, 2000, 5000, 10000, 15000, 20000, 30000,
+    60000, 120000, 300000, 600000, 900000, 1200000, 1800000,
+    3600000, 7200000, 10800000, 14400000, 21600000, 28800000, 43200000,
+    86400000, 172800000, 259200000, 604800000, 1209600000,
+    2592000000, 7776000000, 15552000000,
+    31536000000, 63072000000, 157680000000
+  ];
+  const NICE_DIMS = [
+    48, 60, 64, 72, 80, 90, 96, 100, 120, 128, 144, 150, 160, 180, 192,
+    200, 216, 240, 250, 256, 270, 288, 300, 320, 360, 384, 400, 432, 450,
+    480, 500, 512, 540, 576, 600, 640, 720, 768, 800, 864, 900, 960, 1024,
+    1080, 1152, 1200, 1280, 1440
+  ];
+  const MONTHS = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+  const hilbertCache = new Map();
+
+  function sign(v) { return v > 0 ? 1 : v < 0 ? -1 : 0; }
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function pad2(n) { return n < 10 ? "0" + n : String(n); }
+  function ordinalDay(n) { // 1st, 2nd, 3rd, 4th…11th…21st — days, not zero-padded hours
+    const mod100 = n % 100;
+    const suffix = (mod100 >= 11 && mod100 <= 13) ? "th"
+      : (n % 10 === 1) ? "st"
+      : (n % 10 === 2) ? "nd"
+      : (n % 10 === 3) ? "rd"
+      : "th";
+    return n + suffix;
+  }
+
+  function parseClockTime(raw) {
+    if (!raw) return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})-(\d{2}):(\d{2}):(\d{2})$/.exec(String(raw).trim());
+    if (!m) return null;
+    const t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+    return Number.isFinite(t) ? t : null;
+  }
+  const clockOrigin = parseClockTime(new URLSearchParams(location.search).get("time")); // ?time=YYYY-MM-DD-HH:MM:SS freezes the clock
+  const wallOrigin = Date.now();
+  function nowMs() {
+    return clockOrigin == null ? Date.now() : clockOrigin + (Date.now() - wallOrigin);
+  }
+
+  function daySerial(d) {
+    return Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1970, 0, 1)) / 86400000);
+  }
+
+  function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); }
+  function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1).getTime(); }
+  function startOfYear(d) { return new Date(d.getFullYear(), 0, 1).getTime(); }
+  function startOfHour(d) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours()).getTime();
+  }
+  function startOfMinute(d) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()).getTime();
+  }
+  function startOfSecond(d) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()).getTime();
+  }
+  function startOfCentury(d) {
+    return new Date(Math.floor(d.getFullYear() / 100) * 100, 0, 1).getTime();
+  }
+
+  function localDateValue(t) {
+    const d = new Date(t);
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
+  function parseDateInput(v) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v || "").trim());
+    if (!m) return NaN;
+    return new Date(+m[1], +m[2] - 1, +m[3]).getTime();
+  }
+
+  function formatDur(ms) { // caption: 1m 52.5s, never 112500ms
+    if (!(ms > 0) || !Number.isFinite(ms)) return "0s";
+    if (ms < 1) return (ms * 1000).toFixed(0) + "µs";
+    if (ms < 1000) {
+      if (ms === 100) return "0.1s";
+      if (ms === 250) return "0.25s";
+      if (ms === 500) return "0.5s";
+      if (ms >= 100 && ms % 100 === 0) return (ms / 1000) + "s";
+      return Math.round(ms) + "ms";
+    }
+    const day = 86400000;
+    const hour = 3600000;
+    const min = 60000;
+    const sec = 1000;
+    if (ms % day === 0) return (ms / day) + "d";
+    if (ms % hour === 0 && ms < day) return (ms / hour) + "h";
+    if (ms % min === 0 && ms < hour) return (ms / min) + "m";
+    if (ms % sec === 0 && ms < min) return (ms / sec) + "s";
+    if (ms < min) {
+      const s = ms / sec;
+      return (Number.isInteger(s) ? s : parseFloat(s.toFixed(2))) + "s";
+    }
+    const parts = [];
+    let rest = ms;
+    const d = Math.floor(rest / day);
+    if (d) { parts.push(d + "d"); rest -= d * day; }
+    const h = Math.floor(rest / hour);
+    if (h) { parts.push(h + "h"); rest -= h * hour; }
+    const m = Math.floor(rest / min);
+    if (m && parts.length < 2) { parts.push(m + "m"); rest -= m * min; }
+    if (rest >= 1 && parts.length < 2) {
+      const s = rest / sec;
+      parts.push((Number.isInteger(s) ? s : parseFloat(s.toFixed(1))) + "s");
+    }
+    return parts.join(" ") || "0s";
+  }
+
+  // Boundary ladder, coarse → fine. No weeks.
+  const UNITS = [
+    {
+      id: "century", typical: 100 * 365.2425 * 86400000,
+      index: (t) => Math.floor(new Date(t).getFullYear() / 100),
+      start: (t) => startOfCentury(new Date(t)),
+      end: (t) => { const d = new Date(t); return new Date(Math.floor(d.getFullYear() / 100) * 100 + 100, 0, 1).getTime(); },
+      label: (t) => (Math.floor(new Date(t).getFullYear() / 100) * 100) + "s"
+    },
+    {
+      id: "year", typical: 365.2425 * 86400000,
+      index: (t) => new Date(t).getFullYear(),
+      start: (t) => startOfYear(new Date(t)),
+      end: (t) => { const d = new Date(t); return new Date(d.getFullYear() + 1, 0, 1).getTime(); },
+      label: (t) => String(new Date(t).getFullYear())
+    },
+    {
+      id: "month", typical: 30.436875 * 86400000,
+      index: (t) => { const d = new Date(t); return d.getFullYear() * 12 + d.getMonth(); },
+      start: (t) => startOfMonth(new Date(t)),
+      end: (t) => { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime(); },
+      label: (t) => MONTHS[new Date(t).getMonth()]
+    },
+    {
+      id: "day", typical: 86400000,
+      index: (t) => daySerial(new Date(t)),
+      start: (t) => startOfDay(new Date(t)),
+      end: (t) => { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime(); },
+      label: (t) => ordinalDay(new Date(t).getDate())
+    },
+    {
+      id: "hour", typical: 3600000,
+      index: (t) => { const d = new Date(t); return daySerial(d) * 24 + d.getHours(); },
+      start: (t) => startOfHour(new Date(t)),
+      end: (t) => { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours() + 1).getTime(); },
+      label: (t) => pad2(new Date(t).getHours())
+    },
+    {
+      id: "minute", typical: 60000,
+      index: (t) => { const d = new Date(t); return (daySerial(d) * 24 + d.getHours()) * 60 + d.getMinutes(); },
+      start: (t) => startOfMinute(new Date(t)),
+      end: (t) => { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes() + 1).getTime(); },
+      label: (t) => pad2(new Date(t).getHours()) + ":" + pad2(new Date(t).getMinutes())
+    },
+    {
+      id: "second", typical: 1000,
+      index: (t) => Math.floor(t / 1000),
+      start: (t) => startOfSecond(new Date(t)),
+      end: (t) => startOfSecond(new Date(t)) + 1000,
+      label: (t) => {
+        const d = new Date(t);
+        return pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+      }
+    },
+    {
+      id: "ms100", typical: 100,
+      index: (t) => Math.floor(t / 100),
+      start: (t) => Math.floor(t / 100) * 100,
+      end: (t) => Math.floor(t / 100) * 100 + 100,
+      label: (t) => ((t % 1000) / 100 | 0) + "0cs"
+    },
+    {
+      id: "ms10", typical: 10,
+      index: (t) => Math.floor(t / 10),
+      start: (t) => Math.floor(t / 10) * 10,
+      end: (t) => Math.floor(t / 10) * 10 + 10,
+      label: (t) => pad2(t % 1000) + "ms"
+    },
+    {
+      id: "ms1", typical: 1,
+      index: (t) => Math.floor(t),
+      start: (t) => Math.floor(t),
+      end: (t) => Math.floor(t) + 1,
+      label: (t) => (t % 1000 | 0) + "ms"
+    }
+  ];
+
+  function buildHilbert(width, height) { // generalized Hilbert (Hilbert) fill of width×height
+    const n = width * height;
+    const xs = new Uint16Array(n);
+    const ys = new Uint16Array(n);
+    const at = new Int32Array(n);
+    let i = 0;
+    function visit(x, y) {
+      xs[i] = x;
+      ys[i] = y;
+      at[y * width + x] = i;
+      i++;
+    }
+    function hilbert2d(x, y, ax, ay, bx, by) {
+      const w = Math.abs(ax + ay);
+      const h = Math.abs(bx + by);
+      const dax = sign(ax), day = sign(ay);
+      const dbx = sign(bx), dby = sign(by);
+      if (h === 1) {
+        for (let k = 0; k < w; k++) { visit(x, y); x += dax; y += day; }
+        return;
+      }
+      if (w === 1) {
+        for (let k = 0; k < h; k++) { visit(x, y); x += dbx; y += dby; }
+        return;
+      }
+      let ax2 = Math.floor(ax / 2), ay2 = Math.floor(ay / 2);
+      let bx2 = Math.floor(bx / 2), by2 = Math.floor(by / 2);
+      const w2 = Math.abs(ax2 + ay2);
+      const h2 = Math.abs(bx2 + by2);
+      if (2 * w > 3 * h) {
+        if ((w2 % 2) && (w > 2)) { ax2 += dax; ay2 += day; }
+        hilbert2d(x, y, ax2, ay2, bx, by);
+        hilbert2d(x + ax2, y + ay2, ax - ax2, ay - ay2, bx, by);
+      } else {
+        if ((h2 % 2) && (h > 2)) { bx2 += dbx; by2 += dby; }
+        hilbert2d(x, y, bx2, by2, ax2, ay2);
+        hilbert2d(x + bx2, y + by2, ax, ay, bx - bx2, by - by2);
+        hilbert2d(
+          x + (ax - dax) + (bx2 - dbx),
+          y + (ay - day) + (by2 - dby),
+          -bx2, -by2, -(ax - ax2), -(ay - ay2)
+        );
+      }
+    }
+    hilbert2d(0, 0, width, 0, 0, height);
+    return { xs, ys, at, n: i };
+  }
+
+  function hilbertCellRect(x, y, ax, ay, bx, by) {
+    const w = Math.abs(ax + ay);
+    const h = Math.abs(bx + by);
+    const dax = sign(ax), day = sign(ay);
+    const dbx = sign(bx), dby = sign(by);
+    const x1 = x + dax * Math.max(0, w - 1) + dbx * Math.max(0, h - 1);
+    const y1 = y + day * Math.max(0, w - 1) + dby * Math.max(0, h - 1);
+    return { x: Math.min(x, x1), y: Math.min(y, y1), w: Math.abs(x1 - x) + 1, h: Math.abs(y1 - y) + 1 };
+  }
+
+  const ZOOM_MIN_AREA = 8; // smallest packed parent block we will zoom (must match collectHilbertBlocks)
+
+  function collectHilbertBlocks(width, height, nowIdx, maxArea) {
+    // Recursive Hilbert partitions that contain now, area ≤ maxArea, rectangle packed (no holes).
+    const out = [];
+    function walk(x, y, ax, ay, bx, by, iStart) {
+      const w = Math.abs(ax + ay);
+      const h = Math.abs(bx + by);
+      const area = w * h;
+      const iEnd = iStart + area;
+      if (nowIdx < iStart || nowIdx >= iEnd) return;
+      const box = hilbertCellRect(x, y, ax, ay, bx, by);
+      if (area >= ZOOM_MIN_AREA && area <= maxArea && box.w * box.h === area) {
+        out.push({ box, i0: iStart, i1: iEnd, area });
+      }
+      if (h === 1 || w === 1) return;
+      const dax = sign(ax), day = sign(ay);
+      const dbx = sign(bx), dby = sign(by);
+      let ax2 = Math.floor(ax / 2), ay2 = Math.floor(ay / 2);
+      let bx2 = Math.floor(bx / 2), by2 = Math.floor(by / 2);
+      const w2 = Math.abs(ax2 + ay2);
+      const h2 = Math.abs(bx2 + by2);
+      if (2 * w > 3 * h) {
+        if ((w2 % 2) && (w > 2)) { ax2 += dax; ay2 += day; }
+        const a1 = Math.abs(ax2 + ay2) * h;
+        walk(x, y, ax2, ay2, bx, by, iStart);
+        walk(x + ax2, y + ay2, ax - ax2, ay - ay2, bx, by, iStart + a1);
+      } else {
+        if ((h2 % 2) && (h > 2)) { bx2 += dbx; by2 += dby; }
+        const a1 = Math.abs(bx2 + by2) * Math.abs(ax2 + ay2);
+        const a2 = w * Math.abs((bx - bx2) + (by - by2));
+        walk(x, y, bx2, by2, ax2, ay2, iStart);
+        walk(x + bx2, y + by2, ax, ay, bx - bx2, by - by2, iStart + a1);
+        walk(
+          x + (ax - dax) + (bx2 - dbx),
+          y + (ay - day) + (by2 - dby),
+          -bx2, -by2, -(ax - ax2), -(ay - ay2),
+          iStart + a1 + a2
+        );
+      }
+    }
+    walk(0, 0, width, 0, 0, height, 0);
+    return out;
+  }
+
+  function findHilbertBlock(width, height, nowIdx, maxArea) {
+    const blocks = collectHilbertBlocks(width, height, nowIdx, maxArea);
+    let best = null;
+    for (let i = 0; i < blocks.length; i++) {
+      if (!best || blocks[i].area > best.area) best = blocks[i];
+    }
+    return best;
+  }
+
+  const zoomVarCache = new Map();
+
+  function hilbertVariants(k) { // 8 reflections × 2 directions of a k×k Hilbert — pick one so the zoom path stays 4-connected
+    let vars = zoomVarCache.get(k);
+    if (vars) return vars;
+    const g = getHilbert(k, k);
+    const n = k * k;
+    const maps = [
+      function (x, y) { return [x, y]; },
+      function (x, y) { return [k - 1 - y, x]; },
+      function (x, y) { return [k - 1 - x, k - 1 - y]; },
+      function (x, y) { return [y, k - 1 - x]; },
+      function (x, y) { return [k - 1 - x, y]; },
+      function (x, y) { return [x, k - 1 - y]; },
+      function (x, y) { return [y, x]; },
+      function (x, y) { return [k - 1 - y, k - 1 - x]; }
+    ];
+    vars = [];
+    for (let m = 0; m < maps.length; m++) {
+      for (let rev = 0; rev < 2; rev++) {
+        const xs = new Uint16Array(n);
+        const ys = new Uint16Array(n);
+        for (let i = 0; i < n; i++) {
+          const j = rev ? n - 1 - i : i;
+          const p = maps[m](g.xs[j], g.ys[j]);
+          xs[i] = p[0];
+          ys[i] = p[1];
+        }
+        vars.push({ xs: xs, ys: ys, sx: xs[0], sy: ys[0], ex: xs[n - 1], ey: ys[n - 1] });
+      }
+    }
+    zoomVarCache.set(k, vars);
+    return vars;
+  }
+
+  function pickZoomVariant(vars, k, ox, oy, prevx, prevy, nextOx, nextOy) { // first variant whose start/end touch the previous/next parent cell
+    for (let i = 0; i < vars.length; i++) {
+      const v = vars[i];
+      const sx = ox + v.sx;
+      const sy = oy + v.sy;
+      const ex = ox + v.ex;
+      const ey = oy + v.ey;
+      if (prevx >= 0 && Math.abs(sx - prevx) + Math.abs(sy - prevy) !== 1) continue;
+      if (nextOx != null) {
+        const c0 = Math.abs(ex - nextOx) + Math.abs(ey - nextOy) === 1;
+        const c1 = Math.abs(ex - (nextOx + k - 1)) + Math.abs(ey - nextOy) === 1;
+        const c2 = Math.abs(ex - nextOx) + Math.abs(ey - (nextOy + k - 1)) === 1;
+        const c3 = Math.abs(ex - (nextOx + k - 1)) + Math.abs(ey - (nextOy + k - 1)) === 1;
+        if (!c0 && !c1 && !c2 && !c3) continue;
+      }
+      return v;
+    }
+    return null;
+  }
+
+  function buildZoomHilbert(parentG, box, i0, i1, k) {
+    // True zoom: each parent cell → k×k block in place. Path must not teleport.
+    const W = box.w * k;
+    const H = box.h * k;
+    const n = W * H;
+    const xs = new Uint16Array(n);
+    const ys = new Uint16Array(n);
+    const at = new Int32Array(n);
+    at.fill(-1);
+    const vars = hilbertVariants(k);
+    const kk = k * k;
+    let t = 0;
+    let prevx = -1;
+    let prevy = -1;
+    for (let i = i0; i < i1; i++) {
+      const ox = (parentG.xs[i] - box.x) * k;
+      const oy = (parentG.ys[i] - box.y) * k;
+      let nextOx = null;
+      let nextOy = null;
+      if (i + 1 < i1) {
+        nextOx = (parentG.xs[i + 1] - box.x) * k;
+        nextOy = (parentG.ys[i + 1] - box.y) * k;
+      }
+      let v = pickZoomVariant(vars, k, ox, oy, prevx, prevy, nextOx, nextOy);
+      if (!v) v = pickZoomVariant(vars, k, ox, oy, prevx, prevy, null, null);
+      if (!v) v = vars[0];
+      for (let j = 0; j < kk; j++) {
+        const x = ox + v.xs[j];
+        const y = oy + v.ys[j];
+        xs[t] = x;
+        ys[t] = y;
+        at[y * W + x] = t;
+        t++;
+        prevx = x;
+        prevy = y;
+      }
+    }
+    return { xs, ys, at, n: t };
+  }
+
+  function getHilbert(w, h) {
+    const key = w + "x" + h;
+    let g = hilbertCache.get(key);
+    if (!g) {
+      g = buildHilbert(w, h);
+      if (hilbertCache.size > 10) hilbertCache.clear();
+      hilbertCache.set(key, g);
+    }
+    return g;
+  }
+
+  function factorPairs(n) {
+    const pairs = [];
+    const lim = Math.floor(Math.sqrt(n));
+    for (let a = 2; a <= lim; a++) {
+      if (n % a === 0) {
+        const b = n / a;
+        if (b >= 2) {
+          pairs.push([a, b]);
+          if (a !== b) pairs.push([b, a]);
+        }
+      }
+    }
+    return pairs;
+  }
+
+  const NICE_DIM_SET = new Set(NICE_DIMS);
+  const FINE_CELL_DURS = [1000, 500, 250, 100]; // parent: prefer 1s, then 0.5 / 0.25 / 0.1 if a cell is ≥ ~2.2px
+  const INSET_CELL_DURS = [100, 250, 500, 1000]; // inset cell must be exactly one of these (never 0.625s)
+  const ZOOM_KS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 20, 24, 25, 30, 32, 36, 40, 48, 60, 64];
+
+  function exactZoomK(parentDur, D) { // integer k with k² × D = parent cell duration
+    if (!(parentDur > 0) || !(D > 0)) return 0;
+    const k = Math.round(Math.sqrt(parentDur / D));
+    if (k < 2) return 0;
+    if (Math.abs(k * k * D - parentDur) > 0.75) return 0;
+    return k;
+  }
+
+  function planInsetWithCap(parentDur, srcW, srcH, cap) {
+    let best = null;
+    for (let i = 0; i < INSET_CELL_DURS.length; i++) {
+      const D = INSET_CELL_DURS[i];
+      const k = exactZoomK(parentDur, D);
+      if (!k) continue;
+      const W = srcW * k;
+      const H = srcH * k;
+      if (W * H > cap) continue;
+      best = { k, D, W, H };
+      break;
+    }
+    return best;
+  }
+
+  function planInset(parentDur, srcW, srcH, cssWidth) { // finest allowed D that still fits the cell cap
+    const cap = maxCellsFor(cssWidth, srcW / srcH);
+    return planInsetWithCap(parentDur, srcW, srcH, cap) ||
+      planInsetWithCap(parentDur, srcW, srcH, MAX_CELLS_HARD); // tight tile: still show an inset rather than hide the panel
+  }
+
+  function isZoomableDur(cellDur) {
+    if (cellDur <= 1000) return true;
+    for (let i = 0; i < INSET_CELL_DURS.length; i++) {
+      if (exactZoomK(cellDur, INSET_CELL_DURS[i]) >= 2) return true;
+    }
+    return false;
+  }
+
+  function maxCellsFor(cssWidth, targetAspect) {
+    if (!(cssWidth > 0)) return MAX_CELLS;
+    const cssH = Math.max(1, cssWidth / clamp(targetAspect || 1, 0.42, 3.2));
+    return clamp(Math.ceil(cssWidth * cssH), MAX_CELLS, MAX_CELLS_HARD);
+  }
+
+  function pickFineCellDur(durationMs, cssWidth, targetAspect) { // 1s (or fraction) when the whole range fits the pixel budget
+    if (!(durationMs > 0) || !(cssWidth > 0)) return null;
+    const cap = maxCellsFor(cssWidth, targetAspect);
+    if (durationMs / 1000 > cap) return null;
+    const cssH = Math.max(1, cssWidth / clamp(targetAspect, 0.42, 3.2));
+    const px = cssWidth * cssH;
+    let chosen = null;
+    for (let i = 0; i < FINE_CELL_DURS.length; i++) {
+      const D = FINE_CELL_DURS[i];
+      const cells = Math.ceil(durationMs / D);
+      if (cells < MIN_CELLS || cells > cap) continue;
+      if (Math.sqrt(px / cells) >= 2.2) chosen = D;
+    }
+    return chosen;
+  }
+
+  function scoreGrid(w, h, cells, cellDur, targetAspect, targetCells, preferDur) {
+    // Lower is better. Must stay zoomable (k²×{0.1,0.25,0.5,1}s) when the parent cell is > 1s.
+    const n = w * h;
+    const leftover = n - cells;
+    const leftoverRatio = leftover / n;
+    const aspectLog = Math.log((w / h) / Math.max(1e-6, targetAspect));
+    const aspectErr = Math.abs(aspectLog) * (aspectLog > 0 ? 3.4 : 2.2); // wider-than-target hurts more than taller
+    const oddPenalty = ((w % 2) + (h % 2)) * 0.1;
+    const quadPenalty = ((w % 4 !== 0 ? 1 : 0) + (h % 4 !== 0 ? 1 : 0)) * 0.04;
+    const durationSeconds = cells * cellDur / 1000;
+    const logDur = Math.log2(Math.max(1e-9, durationSeconds));
+    const durationIsPow2 = durationSeconds > 4096 && Math.abs(durationSeconds - Math.pow(2, Math.round(logDur))) < 1e-3;
+    const nearSquareTarget = targetAspect > 0.75 && targetAspect < 1.35;
+    const pow2Square = leftover === 0 && w === h && n >= 4096 && (n & (n - 1)) === 0 && durationIsPow2;
+    const squareBonus = pow2Square && nearSquareTarget ? -0.7 : 0; // Epoch-style 2^n square only if the frame is near-square
+    const exactBonus = leftover === 0 ? -0.2 : leftoverRatio * 3;
+    const countErr = Math.abs(Math.log(n / targetCells));
+    const niceDimBonus = (NICE_DIM_SET.has(w) && NICE_DIM_SET.has(h)) ? -0.05 : 0;
+    const preferBonus = preferDur && Math.abs(cellDur - preferDur) < 1e-3 ? -0.5 : 0;
+    let fineBonus = 0;
+    for (let fi = 0; fi < FINE_CELL_DURS.length; fi++) {
+      if (Math.abs(cellDur - FINE_CELL_DURS[fi]) < 1e-3) { fineBonus = -0.12; break; }
+    }
+    let zoomBonus = 0;
+    if (cellDur > 1000) {
+      zoomBonus = isZoomableDur(cellDur) ? -0.55 : 1.2; // reject parent durations that cannot refine to 0.1–1s
+      if (Math.abs(cellDur / 1000 - Math.round(cellDur / 1000)) < 1e-6) zoomBonus -= 0.12;
+    }
+    return aspectErr + exactBonus + oddPenalty + quadPenalty + squareBonus + countErr * 1.05 + niceDimBonus + preferBonus + fineBonus + zoomBonus;
+  }
+
+  function consider(best, w, h, cells, cellDur, targetAspect, targetCells, preferDur, maxCells) {
+    if (w < 2 || h < 2) return best;
+    if (w * h < cells) return best;
+    if (w * h > (maxCells || MAX_CELLS) * 1.05) return best;
+    const score = scoreGrid(w, h, cells, cellDur, targetAspect, targetCells, preferDur);
+    if (!best || score < best.score) {
+      return { w, h, cells, cellDur, leftover: w * h - cells, score };
+    }
+    return best;
+  }
+
+  function candidateDurs(durationMs) {
+    const durs = new Set(NICE_DURS);
+    for (let i = 0; i < NICE_DIMS.length; i++) {
+      for (let j = 0; j < NICE_DIMS.length; j++) {
+        const cells = NICE_DIMS[i] * NICE_DIMS[j];
+        if (cells >= MIN_CELLS && cells <= MAX_CELLS) durs.add(durationMs / cells);
+      }
+    }
+    for (let e = 6; e <= 10; e++) {
+      const side = 1 << e;
+      const cells = side * side;
+      if (cells <= MAX_CELLS) durs.add(durationMs / cells);
+    }
+    for (let ki = 0; ki < ZOOM_KS.length; ki++) {
+      const k = ZOOM_KS[ki];
+      for (let di = 0; di < INSET_CELL_DURS.length; di++) {
+        durs.add(k * k * INSET_CELL_DURS[di]);
+      }
+    }
+    return durs;
+  }
+
+  function pickGrid(durationMs, targetAspect, cssWidth) { // w×h and cellDur for this range; leftover cells stay surplus/black
+    let best = null;
+    const cap = maxCellsFor(cssWidth, targetAspect);
+    const preferDur = pickFineCellDur(durationMs, cssWidth, targetAspect);
+    const targetCells = preferDur
+      ? Math.min(cap, Math.ceil(durationMs / preferDur))
+      : Math.min(cap, Math.max(MIN_CELLS, durationMs / 1000));
+    const durs = candidateDurs(durationMs);
+    if (preferDur) durs.add(preferDur);
+    durs.forEach((cellDur) => {
+      if (!(cellDur > 0)) return;
+      const cells = Math.ceil(durationMs / cellDur - 1e-9);
+      if (cells < 2) return;
+      if (cells < MIN_CELLS && cellDur > 1) return;
+      const needsZoom = durationMs / 1000 > cap && cellDur > 1000;
+      if (needsZoom && !isZoomableDur(cellDur)) return;
+      const durCap = needsZoom || isZoomableDur(cellDur) ? Math.max(cap, MAX_CELLS_HARD) : cap;
+      if (cells > durCap) return;
+
+      const pairs = factorPairs(cells);
+      for (let p = 0; p < pairs.length; p++) {
+        best = consider(best, pairs[p][0], pairs[p][1], cells, cellDur, targetAspect, targetCells, preferDur, durCap);
+      }
+
+      const approxW = Math.max(2, Math.round(Math.sqrt(cells * targetAspect)));
+      const span = Math.max(80, Math.round(approxW * 0.35));
+      const lo = Math.max(2, approxW - span);
+      const hi = approxW + span;
+      for (let w = lo; w <= hi; w++) {
+        const h = Math.ceil(cells / w);
+        best = consider(best, w, h, cells, cellDur, targetAspect, targetCells, preferDur, durCap);
+      }
+      for (let ni = 0; ni < NICE_DIMS.length; ni++) {
+        const w = NICE_DIMS[ni];
+        const h = Math.ceil(cells / w);
+        best = consider(best, w, h, cells, cellDur, targetAspect, targetCells, preferDur, durCap);
+        best = consider(best, h, w, cells, cellDur, targetAspect, targetCells, preferDur, durCap);
+      }
+    });
+    if (!best) {
+      const cells = Math.min(cap, Math.max(MIN_CELLS, Math.ceil(durationMs / (preferDur || 1000))));
+      const w = Math.max(2, Math.round(Math.sqrt(cells * targetAspect)));
+      const h = Math.ceil(cells / w);
+      best = { w, h, cells, cellDur: preferDur || durationMs / cells, leftover: w * h - cells, score: 0 };
+    }
+    return best;
+  }
+
+  function pickInsetK(parentDur, srcW, srcH, cssWidth) {
+    const plan = planInset(parentDur, srcW, srcH, cssWidth);
+    return plan && plan.k >= 2 ? plan : null;
+  }
+
+  function pickLevels(start, end, cellDur) { // up to 3 units, each large enough to draw and not a single slab
+    const duration = end - start;
+    const picked = [];
+    for (let i = 0; i < UNITS.length; i++) {
+      const u = UNITS[i];
+      if (u.typical < cellDur * 2.2) continue; // unit smaller than ~2 cells — cannot draw a boundary
+      const nRegions = duration / u.typical;
+      const cellsPer = u.typical / cellDur;
+      if (nRegions < 1.6) continue; // whole map is one unit — no internal edge
+      if (cellsPer < 6) continue; // region too few cells to see
+      picked.push(u);
+      if (picked.length === 3) break;
+    }
+    return picked;
+  }
+
+  function pickLabelLevelIndex(levels, start, end) { // one label level; prefer days on a ~month view; else ~18 regions
+    if (!levels.length) return 0;
+    const duration = end - start;
+    const nDays = duration / 86400000;
+    const dayIdx = levels.findIndex((u) => u.id === "day");
+    if (dayIdx >= 0 && nDays >= 1.5 && nDays <= 45) return dayIdx;
+    let best = 0;
+    let bestScore = Infinity;
+    for (let i = 0; i < levels.length; i++) {
+      const n = duration / levels[i].typical;
+      const score = n > 48 ? n - 48 : n < 4 ? (4 - n) * 4 : Math.abs(n - 18);
+      if (score < bestScore) {
+        bestScore = score;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  function fillUnitIds(unit, cellDur, n, cellStart) {
+    const ids = new Int32Array(n);
+    for (let i = 0; i < n; i++) ids[i] = unit.index(cellStart[i] + cellDur * 0.5);
+    return ids;
+  }
+
+  function higherBoundUnits(levels, cellDur) {
+    // Inset: stroke every unit coarser than levels[0] as bound-0 (month on a day-labeled zoom, etc.).
+    const currentId = levels[0] && levels[0].id;
+    const cut = currentId ? UNITS.findIndex((u) => u.id === currentId) : UNITS.length;
+    const out = [];
+    for (let i = 0; i < cut; i++) {
+      if (UNITS[i].typical < cellDur * 2.2) continue;
+      out.push(UNITS[i]);
+    }
+    return out;
+  }
+
+  function largestRectangle(mask, w, h) {
+    const height = new Int32Array(w);
+    let best = { x: 0, y: 0, w: 0, h: 0, area: 0 };
+    let bestSq = { x: 0, y: 0, w: 0, h: 0, area: 0, sq: Infinity };
+    let bestMaxSq = { x: 0, y: 0, w: 0, h: 0, area: 0 };
+    const stackH = new Int32Array(w + 1);
+    const stackI = new Int32Array(w + 1);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) height[x] = mask[y * w + x] ? height[x] + 1 : 0;
+      let sp = 0;
+      for (let x = 0; x <= w; x++) {
+        const ht = x < w ? height[x] : 0;
+        let start = x;
+        while (sp && stackH[sp - 1] > ht) {
+          const sh = stackH[--sp];
+          const si = stackI[sp];
+          const width = x - si;
+          const area = width * sh;
+          const rect = { x: si, y: y - sh + 1, w: width, h: sh, area };
+          if (area > best.area) best = rect;
+          const sq = Math.abs(Math.log((width || 1) / (sh || 1)));
+          if (area * 2 >= (best.area || area) && (sq < bestSq.sq || area > bestSq.area * 1.15)) {
+            bestSq = { x: si, y: y - sh + 1, w: width, h: sh, area, sq };
+          }
+          const side = Math.min(width, sh);
+          if (side * side > bestMaxSq.area) {
+            bestMaxSq = {
+              x: si + ((width - side) >> 1),
+              y: (y - sh + 1) + ((sh - side) >> 1),
+              w: side,
+              h: side,
+              area: side * side
+            };
+          }
+          start = si;
+        }
+        stackH[sp] = ht;
+        stackI[sp] = start;
+        sp++;
+      }
+    }
+    return { max: best, square: bestSq.area ? bestSq : best, maxSquare: bestMaxSq.area ? bestMaxSq : best };
+  }
+
+  function centerSquareInRect(rect, side) { // same side as the max square, slid to the rect's center
+    const s = Math.max(1, Math.min(side, rect.w, rect.h));
+    return {
+      x: rect.x + ((rect.w - s) >> 1),
+      y: rect.y + ((rect.h - s) >> 1),
+      w: s,
+      h: s,
+      area: s * s
+    };
+  }
+
+  function maskCentroid(mask, bw, bh) {
+    let sx = 0, sy = 0, n = 0;
+    for (let i = 0; i < mask.length; i++) {
+      if (!mask[i]) continue;
+      sx += (i % bw) + 0.5;
+      sy += ((i / bw) | 0) + 0.5;
+      n++;
+    }
+    return n ? { x: sx / n, y: sy / n } : { x: bw / 2, y: bh / 2 };
+  }
+
+  function nearestFilledSquare(mask, bw, bh, cx, cy, side) {
+    // Largest-square size, parked as close as possible to the segment centre.
+    const s = Math.max(1, side | 0);
+    const xTry = Math.floor(cx - s / 2);
+    const yTry = Math.floor(cy - s / 2);
+    const covers = (x0, y0) => {
+      if (x0 < 0 || y0 < 0 || x0 + s > bw || y0 + s > bh) return false;
+      for (let y = 0; y < s; y++) {
+        for (let x = 0; x < s; x++) {
+          if (!mask[(y0 + y) * bw + (x0 + x)]) return false;
+        }
+      }
+      return true;
+    };
+    if (covers(xTry, yTry)) return { x: xTry, y: yTry, w: s, h: s, area: s * s };
+    const stride = bw + 1;
+    const sat = new Int32Array(stride * (bh + 1));
+    for (let y = 1; y <= bh; y++) {
+      let row = 0;
+      for (let x = 1; x <= bw; x++) {
+        row += mask[(y - 1) * bw + (x - 1)] ? 1 : 0;
+        sat[y * stride + x] = sat[(y - 1) * stride + x] + row;
+      }
+    }
+    const need = s * s;
+    let best = null, bestD = Infinity;
+    for (let y = 0; y + s <= bh; y++) {
+      for (let x = 0; x + s <= bw; x++) {
+        const sum = sat[(y + s) * stride + (x + s)] - sat[y * stride + (x + s)] -
+          sat[(y + s) * stride + x] + sat[y * stride + x];
+        if (sum !== need) continue;
+        const dx = x + s / 2 - cx, dy = y + s / 2 - cy;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) {
+          bestD = d;
+          best = { x, y, w: s, h: s, area: need };
+        }
+      }
+    }
+    return best;
+  }
+
+  function rectsOverlap(a, b, pad) {
+    return !(a.x + a.w + pad < b.x || b.x + b.w + pad < a.x || a.y + a.h + pad < b.y || b.y + b.h + pad < a.y);
+  }
+
+  function labelColor(onFilled, live) { // muted, not translucent; live unit uses --label-live*
+    if (live) return onFilled ? theme.labelLive : theme.labelLiveEmpty;
+    return onFilled ? theme.label : theme.labelEmpty;
+  }
+
+  function median(values) {
+    if (!values.length) return 0;
+    const a = values.slice().sort((x, y) => x - y);
+    const m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+  }
+
+  function labelFillFrac(unitId) {
+    if (unitId === "hour" || unitId === "minute" || unitId === "second") return 0.38;
+    return 0.7;
+  }
+
+  function fontFit(ctx, text, pw, ph, frac) {
+    const f = frac == null ? 0.7 : frac;
+    const maxW = Math.max(1, pw * f);
+    const maxH = Math.max(1, ph * f);
+    let size = maxH;
+    ctx.font = "500 " + size + "px system-ui, sans-serif";
+    const tw = ctx.measureText(text).width;
+    if (tw > maxW) size *= maxW / tw;
+    return size;
+  }
+
+  function formatRange(start, end) {
+    const a = new Date(start);
+    const b = new Date(end - 1);
+    const fa = a.getFullYear() + "-" + pad2(a.getMonth() + 1) + "-" + pad2(a.getDate());
+    const fb = b.getFullYear() + "-" + pad2(b.getMonth() + 1) + "-" + pad2(b.getDate());
+    if (end - start < 2 * 86400000) {
+      const ta = pad2(a.getHours()) + ":" + pad2(a.getMinutes());
+      const tb = pad2(b.getHours()) + ":" + pad2(b.getMinutes());
+      if (fa === fb) return fa + " " + ta + " → " + tb;
+      return fa + " " + ta + " → " + fb + " " + tb;
+    }
+    if (fa === fb) return fa;
+    return fa + " → " + fb;
+  }
+
+  class TimeMap {
+    constructor(wrap, captionEl) {
+      this.wrap = wrap;
+      this.captionEl = captionEl;
+      this.base = document.createElement("canvas");
+      this.base.className = "layer-base";
+      this.bounds = document.createElement("canvas");
+      this.bounds.className = "layer-bounds";
+      this.labels = document.createElement("canvas");
+      this.labels.className = "layer-labels";
+      this.hl = document.createElement("canvas");
+      this.hl.className = "layer-hl";
+      wrap.appendChild(this.base);
+      wrap.appendChild(this.bounds);
+      wrap.appendChild(this.labels);
+      wrap.appendChild(this.hl);
+      this.ctxBase = this.base.getContext("2d", { alpha: false });
+      this.ctxBounds = this.bounds.getContext("2d");
+      this.ctxLabels = this.labels.getContext("2d");
+      this.ctxHl = this.hl.getContext("2d");
+      this.start = 0;
+      this.end = 0;
+      this.customRanges = [];
+      this.layout = null;
+      this.zoomBox = null;
+      this._lastKey = "";
+      this._liveLabel = null; // live unit glyph; place is refreshed at most once a minute
+    }
+
+    setRange(start, end) {
+      if (this.start !== start || this.end !== end) {
+        this.zoomRange = null;
+        this.zoomBox = null;
+        this._zoomMinute = undefined;
+      }
+      this.start = start;
+      this.end = end;
+      this.layout = null;
+      this._lastKey = "";
+      this._liveLabel = null;
+    }
+
+    setRanges(ranges) {
+      this.customRanges = ranges || [];
+    }
+
+    rebuild(cssWidth, targetAspect) { // parent map for [start, end]
+      const duration = this.end - this.start;
+      if (!(duration > 0) || cssWidth < 8) return;
+      this.zoomBox = null; // cell box is stale after a new grid; zoomRange is remapped in updateZoom
+      const grid = pickGrid(duration, targetAspect, cssWidth);
+      const g = getHilbert(grid.w, grid.h);
+      const cellStart = new Float64Array(grid.cells);
+      for (let i = 0; i < grid.cells; i++) cellStart[i] = this.start + i * grid.cellDur;
+      const levels = pickLevels(this.start, this.end, grid.cellDur);
+      const levelIds = levels.map((u) => fillUnitIds(u, grid.cellDur, grid.cells, cellStart));
+      const labelLevel = pickLabelLevelIndex(levels, this.start, this.end);
+      this.layout = { grid, g, levels, levelIds, labelLevel, cssWidth, cellStart };
+      this._cropKey = "";
+      delete this.layout.cssHeight;
+      this.tileW = cssWidth;
+      this.tileH = 0;
+      this._layoutCanvases();
+      this._renderBounds();
+      this._lastKey = "";
+      this._liveLabel = null;
+      this.tick(nowMs(), true);
+      if (this.captionEl) {
+        this.captionEl.textContent =
+          formatRange(this.start, this.end) + " · " +
+          grid.w + "×" + grid.h + " · " + formatDur(grid.cellDur) + "/cell" +
+          (grid.leftover ? " · +" + grid.leftover : "");
+      }
+    }
+
+    rebuildZoom(cssWidth, parentLayout, win) { // inset: same cells as win.box, refined ×k, inherit coarser bounds
+      if (!parentLayout || !win || win.k < 2 || cssWidth < 8) return;
+      this.start = win.start;
+      this.end = win.end;
+      const parentDur = parentLayout.grid.cellDur;
+      const cellDur = parentDur / (win.k * win.k);
+      const g = buildZoomHilbert(parentLayout.g, win.box, win.i0, win.i1, win.k);
+      const grid = {
+        w: win.box.w * win.k,
+        h: win.box.h * win.k,
+        cells: g.n,
+        cellDur,
+        leftover: win.box.w * win.k * win.box.h * win.k - g.n
+      };
+      const cellStart = new Float64Array(grid.cells);
+      for (let i = 0; i < grid.cells; i++) cellStart[i] = this.start + i * cellDur;
+      const levels = pickLevels(this.start, this.end, cellDur);
+      const levelIds = levels.map((u) => fillUnitIds(u, cellDur, grid.cells, cellStart));
+      const labelLevel = pickLabelLevelIndex(levels, this.start, this.end);
+      const inherit = higherBoundUnits(levels, cellDur).map((u) =>
+        fillUnitIds(u, cellDur, grid.cells, cellStart)
+      );
+      this.layout = { grid, g, levels, levelIds, labelLevel, cssWidth, cellStart, inherit };
+      this.tileW = cssWidth;
+      this.tileH = 0;
+      this._layoutCanvases();
+      this._renderBounds();
+      this._lastKey = "";
+      this._liveLabel = null;
+      this.tick(nowMs(), true);
+      if (this.captionEl) {
+        this.captionEl.textContent =
+          formatRange(this.start, this.end) + " · " +
+          grid.w + "×" + grid.h + " · " + formatDur(grid.cellDur) + "/cell" +
+          (grid.leftover ? " · +" + grid.leftover : "");
+      }
+    }
+
+    pickZoomWindow(now) {
+      // Packed Hilbert block around now that refines to ≤1s/cell.
+      // Prefer ¼ of the pixel budget (a 4s/cell month used to zoom a whole week).
+      // Hilbert partitions skip sizes: a 2h/cell map with k=120 only has budget ≈ 24
+      // cells, and some grids have no packed rect in 8–24 around now. Then take the
+      // smallest larger block that still plans, so the inset does not vanish.
+      if (!this.layout) return null;
+      const { grid, cellStart } = this.layout;
+      if (grid.cellDur <= 1000) return null; // already at inset resolution
+      if (!isZoomableDur(grid.cellDur)) return null;
+      if (now < this.start || now >= this.end) return null;
+      const nowIdx = clamp(Math.floor((now - this.start) / grid.cellDur), 0, grid.cells - 1);
+      const cap = maxCellsFor(this.cssW, grid.w / grid.h);
+      let budget = 0;
+      for (let i = 0; i < INSET_CELL_DURS.length; i++) {
+        const k = exactZoomK(grid.cellDur, INSET_CELL_DURS[i]);
+        if (k >= 2) budget = Math.max(budget, Math.floor(cap / (k * k)));
+      }
+      const parentN = grid.w * grid.h;
+      const sliceCap = Math.max(ZOOM_MIN_AREA, Math.floor(parentN * 0.12));
+      let target = Math.min(budget, sliceCap);
+      const quarter = Math.floor(target / 4);
+      if (quarter >= ZOOM_MIN_AREA) target = quarter;
+      if (target < ZOOM_MIN_AREA) return null;
+      const collectLimit = Math.min(sliceCap, Math.max(target * 4, budget * 4, 64));
+      const blocks = collectHilbertBlocks(grid.w, grid.h, nowIdx, collectLimit);
+      let preferred = null;
+      let preferredScore = -Infinity;
+      let fallback = null;
+      let fallbackArea = Infinity;
+      for (let b = 0; b < blocks.length; b++) {
+        const block = blocks[b];
+        const i0 = block.i0;
+        const i1 = Math.min(block.i1, grid.cells);
+        if (i1 - i0 < ZOOM_MIN_AREA) continue;
+        if (block.box.w * block.box.h !== i1 - i0) continue; // skip holed bounding boxes — inset must be a solid block
+        const zStart = cellStart[i0];
+        const zEnd = cellStart[i1 - 1] + grid.cellDur;
+        if ((zEnd - zStart) / (this.end - this.start) > 0.2) continue; // zoom must stay a small slice of the range
+        const plan = pickInsetK(grid.cellDur, block.box.w, block.box.h, this.cssW);
+        if (!plan || plan.D > 1000) continue;
+        const win = { i0, i1, start: zStart, end: zEnd, box: block.box, k: plan.k };
+        if (block.area <= target) {
+          const score = block.area * 1000 - plan.D; // largest remaining block at/under the crop target
+          if (score > preferredScore) {
+            preferredScore = score;
+            preferred = win;
+          }
+        } else if (block.area < fallbackArea) {
+          fallbackArea = block.area;
+          fallback = win; // smallest block above the target that still refines
+        }
+      }
+      return preferred || fallback;
+    }
+
+    remapZoomRange(zStart, zEnd) {
+      // Same time window on a new parent grid. If that span is no longer a packed
+      // block, take the packed block whose times stay closest — do not maximize area.
+      if (!this.layout) return null;
+      const { grid, cellStart } = this.layout;
+      if (grid.cellDur <= 1000) return null;
+      if (!isZoomableDur(grid.cellDur)) return null;
+      const i0 = clamp(Math.floor((zStart - this.start) / grid.cellDur), 0, grid.cells);
+      const i1 = clamp(Math.ceil((zEnd - this.start) / grid.cellDur), 0, grid.cells);
+      if (i1 - i0 >= ZOOM_MIN_AREA) {
+        const box = this.boundingBox(i0, i1);
+        const plan = box && box.w * box.h === i1 - i0
+          ? pickInsetK(grid.cellDur, box.w, box.h, this.cssW) : null;
+        if (plan && plan.D <= 1000) {
+          return { i0, i1, start: zStart, end: zEnd, box, k: plan.k };
+        }
+      }
+      const midIdx = clamp(Math.floor(((zStart + zEnd) / 2 - this.start) / grid.cellDur), 0, grid.cells - 1);
+      const parentN = grid.w * grid.h;
+      const blocks = collectHilbertBlocks(grid.w, grid.h, midIdx, Math.max(64, Math.floor(parentN * 0.12)));
+      let best = null;
+      let bestDist = Infinity;
+      for (let b = 0; b < blocks.length; b++) {
+        const block = blocks[b];
+        const a = block.i0;
+        const c = Math.min(block.i1, grid.cells);
+        if (c - a < ZOOM_MIN_AREA) continue;
+        if (block.box.w * block.box.h !== c - a) continue;
+        const plan = pickInsetK(grid.cellDur, block.box.w, block.box.h, this.cssW);
+        if (!plan || plan.D > 1000) continue;
+        const bs = cellStart[a];
+        const be = cellStart[c - 1] + grid.cellDur;
+        const dist = Math.abs(bs - zStart) + Math.abs(be - zEnd);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = { i0: a, i1: c, start: bs, end: be, box: block.box, k: plan.k };
+        }
+      }
+      return best;
+    }
+
+    zoomContainsNow(now) {
+      return !!(this.zoomRange && now >= this.zoomRange.start && now < this.zoomRange.end);
+    }
+
+    _layoutCanvases() {
+      const { grid, cssWidth } = this.layout;
+      const cssHeight = this.layout.cssHeight != null
+        ? Math.max(1, Math.round(this.layout.cssHeight))
+        : Math.max(1, Math.round(cssWidth * grid.h / grid.w));
+      this.cssW = cssWidth;
+      this.cssH = cssHeight;
+      if (!(this.tileW > 0)) this.tileW = cssWidth;
+      if (!(this.tileH > 0)) this.tileH = cssHeight;
+      this.wrap.style.width = cssWidth + "px";
+      this.wrap.style.height = cssHeight + "px";
+      this.base.width = grid.w;
+      this.base.height = grid.h;
+      this.base.style.width = cssWidth + "px";
+      this.base.style.height = cssHeight + "px";
+      const dpr = Math.min(3, window.devicePixelRatio || 1);
+      this.dpr = dpr;
+      this.hlPad = 3; // yellow frame is drawn outside the pixels; hl canvas is padded so Fit does not clip it
+      for (const c of [this.bounds, this.labels]) {
+        c.width = Math.round(cssWidth * dpr);
+        c.height = Math.round(cssHeight * dpr);
+        c.style.width = cssWidth + "px";
+        c.style.height = cssHeight + "px";
+        c.style.left = "0";
+        c.style.top = "0";
+      }
+      const pad = this.hlPad;
+      this.hl.width = Math.round((cssWidth + pad * 2) * dpr);
+      this.hl.height = Math.round((cssHeight + pad * 2) * dpr);
+      this.hl.style.width = (cssWidth + pad * 2) + "px";
+      this.hl.style.height = (cssHeight + pad * 2) + "px";
+      this.hl.style.left = -pad + "px";
+      this.hl.style.top = -pad + "px";
+      this.ctxBounds.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.ctxLabels.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.ctxHl.setTransform(dpr, 0, 0, dpr, pad * dpr, pad * dpr);
+    }
+
+    setDisplayWidth(cssWidth) {
+      if (!this.layout || !(cssWidth > 8)) return;
+      cssWidth = Math.max(8, Math.round(cssWidth));
+      const h = Math.max(8, Math.round(cssWidth * this.layout.grid.h / this.layout.grid.w));
+      this.setDisplaySize(cssWidth, h);
+    }
+
+    setDisplaySize(tileW, tileH) {
+      // Fit slot is tileW×tileH; the canvas letterboxes to grid.w/grid.h — never stretch the curve.
+      if (!this.layout || !(tileW > 8) || !(tileH > 8)) return;
+      tileW = Math.max(8, Math.round(tileW));
+      tileH = Math.max(8, Math.round(tileH));
+      const aspect = this.layout.grid.w / this.layout.grid.h;
+      let cssWidth;
+      let cssHeight;
+      if (tileW / tileH > aspect) {
+        cssHeight = tileH;
+        cssWidth = Math.max(8, Math.round(tileH * aspect));
+      } else {
+        cssWidth = tileW;
+        cssHeight = Math.max(8, Math.round(tileW / aspect));
+      }
+      if (this.tileW === tileW && this.tileH === tileH &&
+          this.cssW === cssWidth && this.cssH === cssHeight &&
+          this.layout.cssWidth === cssWidth && this.layout.cssHeight === cssHeight) return;
+      this.tileW = tileW;
+      this.tileH = tileH;
+      this.layout.cssWidth = cssWidth;
+      this.layout.cssHeight = cssHeight;
+      this._layoutCanvases();
+      this._renderBounds();
+      this._lastKey = "";
+      this.tick(nowMs(), true); // keep _liveLabel: same grid cells, only the CSS box changed
+    }
+
+    cellRangeForUnit(unit, now) {
+      if (now < this.start || now >= this.end) return null;
+      const u0 = unit.start(now);
+      const u1 = unit.end(now);
+      const { grid } = this.layout;
+      const i0 = clamp(Math.floor((u0 - this.start) / grid.cellDur), 0, grid.cells);
+      const i1 = clamp(Math.ceil((u1 - this.start) / grid.cellDur), 0, grid.cells);
+      if (i1 <= i0) return null;
+      return [i0, i1];
+    }
+
+    boundingBox(i0, i1) {
+      const { g } = this.layout;
+      let minx = Infinity, miny = Infinity, maxx = -1, maxy = -1;
+      for (let i = i0; i < i1; i++) {
+        const x = g.xs[i], y = g.ys[i];
+        if (x < minx) minx = x;
+        if (y < miny) miny = y;
+        if (x > maxx) maxx = x;
+        if (y > maxy) maxy = y;
+      }
+      if (maxx < 0) return null;
+      return { x: minx, y: miny, w: maxx - minx + 1, h: maxy - miny + 1 };
+    }
+
+    tick(now, force) {
+      // Fill along the curve up to now. Current coarsest unit is tinted (past/future). Head cell is --head. Surplus stays black.
+      if (!this.layout) return;
+      const { grid, g, levels, levelIds, cellStart } = this.layout;
+      const nowKey = Math.floor(now / Math.max(1, grid.cellDur));
+      let curId = null;
+      if (levels[0] && now >= this.start && now < this.end) curId = levels[0].index(now);
+      const key = nowKey + ":" + curId;
+      if (!force && key === this._lastKey) return;
+      const unitChanged = !this._lastKey.endsWith(":" + curId);
+      this._lastKey = key;
+
+      const img = this.ctxBase.createImageData(grid.w, grid.h);
+      const buf = new Uint32Array(img.data.buffer);
+      buf.fill(theme.surplus);
+      const ids = levelIds[0];
+      const n = grid.cells;
+      const dur = grid.cellDur;
+      for (let i = 0; i < n; i++) {
+        const p = g.xs[i] + g.ys[i] * grid.w;
+        const t0 = cellStart[i];
+        const inCur = curId != null && ids && ids[i] === curId;
+        if (now >= t0 + dur) buf[p] = inCur ? theme.curPast : theme.past; // elapsed
+        else if (now >= t0) buf[p] = theme.head; // the living cell
+        else buf[p] = inCur ? theme.curFuture : theme.future; // not yet
+      }
+      this.ctxBase.putImageData(img, 0, 0);
+      this._renderLabels(now);
+      if (force || unitChanged) this._renderOverlay(now, curId);
+    }
+
+    _renderOverlay(now, curId) {
+      // Current coarsest unit: outline only (filled and empty both visible). Zoom box: 1px outside the cells.
+      const ctx = this.ctxHl;
+      const pad = this.hlPad || 0;
+      ctx.clearRect(-pad, -pad, this.cssW + pad * 2, this.cssH + pad * 2);
+      if (!this.layout) return;
+      const { grid, g, levelIds } = this.layout;
+      const cw = this.cssW / grid.w;
+      const ch = this.cssH / grid.h;
+      const at = g.at;
+      if (curId != null && levelIds[0]) {
+        const ids = levelIds[0];
+        const inside = (j) => j >= 0 && j < grid.cells && ids[j] === curId;
+        ctx.strokeStyle = theme.currentOutline;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        for (let i = 0; i < grid.cells; i++) {
+          if (ids[i] !== curId) continue;
+          const x = g.xs[i], y = g.ys[i];
+          if (x === 0 || !inside(at[y * grid.w + x - 1])) {
+            ctx.moveTo(x * cw, y * ch);
+            ctx.lineTo(x * cw, (y + 1) * ch);
+          }
+          if (x === grid.w - 1 || !inside(at[y * grid.w + x + 1])) {
+            ctx.moveTo((x + 1) * cw, y * ch);
+            ctx.lineTo((x + 1) * cw, (y + 1) * ch);
+          }
+          if (y === 0 || !inside(at[(y - 1) * grid.w + x])) {
+            ctx.moveTo(x * cw, y * ch);
+            ctx.lineTo((x + 1) * cw, y * ch);
+          }
+          if (y === grid.h - 1 || !inside(at[(y + 1) * grid.w + x])) {
+            ctx.moveTo(x * cw, (y + 1) * ch);
+            ctx.lineTo((x + 1) * cw, (y + 1) * ch);
+          }
+        }
+        ctx.stroke();
+      }
+      if (this.zoomBox) {
+        const b = this.zoomBox;
+        const rx = b.x * cw;
+        const ry = b.y * ch;
+        const rw = b.w * cw;
+        const rh = b.h * ch;
+        ctx.strokeStyle = theme.zoom;
+        ctx.lineWidth = 2;
+        ctx.lineJoin = "miter";
+        ctx.strokeRect(rx - 1, ry - 1, rw + 2, rh + 2); // outside the selection, not inset into pixels
+      }
+    }
+
+    currentFillRange(now) {
+      if (!this.layout || !this.layout.levels[0]) return null;
+      if (now < this.start || now >= this.end) return null;
+      const unit = this.layout.levels[0];
+      const a = Math.max(unit.start(now), this.start);
+      const b = Math.min(unit.end(now), this.end);
+      if (b <= a) return null;
+      if ((b - a) / (this.end - this.start) > 0.9) {
+        if (!this.layout.levels[1]) return null;
+        const u2 = this.layout.levels[1];
+        const a2 = Math.max(u2.start(now), this.start);
+        const b2 = Math.min(u2.end(now), this.end);
+        if (b2 <= a2 || (b2 - a2) / (this.end - this.start) > 0.9) return null;
+        return { start: a2, end: b2, id: u2.id };
+      }
+      return { start: a, end: b, id: unit.id };
+    }
+
+    _strokeBoundIds(ctx, ids, lw, color) {
+      const { grid, g } = this.layout;
+      const cw = this.cssW / grid.w;
+      const ch = this.cssH / grid.h;
+      const at = g.at;
+      const nCells = grid.cells;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lw;
+      ctx.lineJoin = "miter";
+      ctx.beginPath();
+      for (let y = 0; y < grid.h; y++) {
+        for (let x = 0; x < grid.w; x++) {
+          const i = at[y * grid.w + x];
+          if (i < 0 || i >= nCells) continue;
+          const id = ids[i];
+          if (x + 1 < grid.w) {
+            const j = at[y * grid.w + x + 1];
+            if (j >= 0 && j < nCells && ids[j] !== id) {
+              const px = (x + 1) * cw;
+              ctx.moveTo(px, y * ch);
+              ctx.lineTo(px, (y + 1) * ch);
+            }
+          }
+          if (y + 1 < grid.h) {
+            const j = at[(y + 1) * grid.w + x];
+            if (j >= 0 && j < nCells && ids[j] !== id) {
+              const py = (y + 1) * ch;
+              ctx.moveTo(x * cw, py);
+              ctx.lineTo((x + 1) * cw, py);
+            }
+          }
+        }
+      }
+      ctx.stroke();
+    }
+
+    _renderBounds() {
+      const ctx = this.ctxBounds;
+      const { grid, levels, levelIds, inherit } = this.layout;
+      ctx.clearRect(0, 0, this.cssW, this.cssH);
+      const cw = this.cssW / grid.w;
+      const ch = this.cssH / grid.h;
+      const BOUND_W = [0.6, 0.4, 0.2]; // [coarsest, middle, fallback] stroke, CSS px — month/day on a year map
+      const INHERIT_W = 2; // extra-thick: units coarser than this map (May|June on a day inset)
+      const HAIR_GAIN = 0.5; // unclamped width when a unit-block is HAIR_REF_PX pixels across
+      const HAIR_REF_PX = 10; // “normal” block size. Raise = thinner lines on small blocks (8px/56 → very thin)
+      const HAIR_MIN = 0.16; // never thinner than this (lines stay visible). Lower if hours drown in the mesh
+      const HAIR_MAX = 0.8; // never thicker than this, and keep it below BOUND_W[0]
+      const labelLi = this.layout.labelLevel || 0;
+      for (let li = levels.length - 1; li >= 0; li--) {
+        const cellsPer = Math.max(1, levels[li].typical / grid.cellDur);
+        const sidePx = Math.sqrt(cellsPer) * Math.min(cw, ch); // typical unit-block side on screen, e.g. ~8px for a minute
+        const hair = li >= 2 || li > labelLi; // 3rd level, or anything finer than the labels (minutes under hour numbers)
+        const lw = hair
+          ? clamp(HAIR_GAIN * (sidePx / HAIR_REF_PX), HAIR_MIN, HAIR_MAX) // e.g. 0.5*(8/56)=0.07 → clamped to HAIR_MIN
+          : (BOUND_W[li] || BOUND_W[2]);
+        const color = hair
+          ? theme.bound3
+          : (li === 0 ? theme.bound1 : theme.bound2);
+        this._strokeBoundIds(ctx, levelIds[li], lw, color);
+      }
+      if (inherit) {
+        for (let i = 0; i < inherit.length; i++) {
+          this._strokeBoundIds(ctx, inherit[i], INHERIT_W, theme.bound0);
+        }
+      }
+    }
+
+    _collectRegions(levelIndex) {
+      const { grid, g, levelIds } = this.layout;
+      const ids = levelIds[levelIndex];
+      const groups = new Map();
+      for (let i = 0; i < grid.cells; i++) {
+        const id = ids[i];
+        let rec = groups.get(id);
+        if (!rec) {
+          rec = { id, idx: [], minx: g.xs[i], miny: g.ys[i], maxx: g.xs[i], maxy: g.ys[i] };
+          groups.set(id, rec);
+        }
+        rec.idx.push(i);
+        const x = g.xs[i], y = g.ys[i];
+        if (x < rec.minx) rec.minx = x;
+        if (y < rec.miny) rec.miny = y;
+        if (x > rec.maxx) rec.maxx = x;
+        if (y > rec.maxy) rec.maxy = y;
+      }
+      return [...groups.values()];
+    }
+
+    _renderLabels(now) {
+      // One size for all labels. Text shorter than 4 chars uses the largest square in the segment.
+      const LABEL_SHORT_FILL = 0.36; // 00–23, 1st–9th: font = this × max square. Raise if small, lower if huge
+      const ctx = this.ctxLabels;
+      ctx.clearRect(0, 0, this.cssW, this.cssH);
+      const { grid, g, levels, labelLevel, cellStart } = this.layout;
+      if (!levels.length) return;
+      if (now == null) now = nowMs();
+      const li = labelLevel || 0;
+      const unit = levels[li];
+      const regions = this._collectRegions(li);
+      if (!regions.length) return;
+      const cw = this.cssW / grid.w;
+      const ch = this.cssH / grid.h;
+      const dur = grid.cellDur;
+      const items = [];
+
+      for (let r = 0; r < regions.length; r++) {
+        const region = regions[r];
+        const t = cellStart[region.idx[0]] + dur * 0.5;
+        const text = unit.label(t);
+        const bw = region.maxx - region.minx + 1;
+        const bh = region.maxy - region.miny + 1;
+        const full = new Uint8Array(bw * bh);
+        const past = new Uint8Array(bw * bh);
+        const future = new Uint8Array(bw * bh);
+        let nPast = 0, nFuture = 0, tMin = Infinity, tMax = -Infinity;
+        for (let k = 0; k < region.idx.length; k++) {
+          const i = region.idx[k];
+          const mi = (g.ys[i] - region.miny) * bw + (g.xs[i] - region.minx);
+          full[mi] = 1;
+          const t0 = cellStart[i];
+          const t1 = t0 + dur;
+          if (t0 < tMin) tMin = t0;
+          if (t1 > tMax) tMax = t1;
+          if (t1 <= now) {
+            past[mi] = 1;
+            nPast++;
+          } else if (t0 > now) {
+            future[mi] = 1;
+            nFuture++;
+          }
+        }
+        const live = now >= tMin && now < tMax;
+        let onFilled = tMax <= now;
+        let placeMask = full;
+        if (live) {
+          // Live unit: sit in the larger half (filled vs empty), never on the head cell.
+          if (nPast >= nFuture && nPast > 0) {
+            placeMask = past;
+            onFilled = true;
+          } else if (nFuture > 0) {
+            placeMask = future;
+            onFilled = false;
+          }
+        }
+        const short = text.length <= 4; // 00–23, 1st–31st: inscribe in the filled square nearest the centroid — never outside the block
+        const tight = !short && (unit.id === "hour" || unit.id === "minute" || unit.id === "second");
+        const minute = Math.floor(now / 60000);
+        const cached = this._liveLabel;
+        if (live && cached && cached.minute === minute && cached.text === text &&
+            cached.ox === region.minx && cached.oy === region.miny &&
+            cached.onFilled === onFilled) {
+          items.push({
+            text,
+            n: region.idx.length,
+            color: labelColor(onFilled, live),
+            fit: cached.fit,
+            place: cached.place,
+            ox: cached.ox,
+            oy: cached.oy
+          });
+          continue;
+        }
+        const packed = largestRectangle(full, bw, bh);
+        const placed = largestRectangle(placeMask, bw, bh);
+        const maxSq = packed.maxSquare && packed.maxSquare.area ? packed.maxSquare : packed.max;
+        const srcMax = placeMask === full
+          ? maxSq
+          : (placed.maxSquare && placed.maxSquare.area ? placed.maxSquare : placed.max);
+        const mid = maskCentroid(placeMask, bw, bh);
+        let placeSq = short
+          ? (nearestFilledSquare(placeMask, bw, bh, mid.x, mid.y, srcMax.w || 1) ||
+            (placed.max.area ? centerSquareInRect(placed.max, srcMax.w || 1) : srcMax))
+          : srcMax;
+        if (short && placeSq && placeSq.w > 2) {
+          placeSq = { // 1-cell inset so glyphs do not kiss the day boundary
+            x: placeSq.x + 1, y: placeSq.y + 1,
+            w: placeSq.w - 2, h: placeSq.h - 2,
+            area: (placeSq.w - 2) * (placeSq.h - 2)
+          };
+        }
+        const item = {
+          text,
+          n: region.idx.length,
+          color: labelColor(onFilled, live),
+          fit: short ? maxSq : (tight ? packed.square : packed.max), // shared font from the whole block
+          place: short
+            ? (placeSq && placeSq.area ? placeSq : maxSq)
+            : (tight ? (placed.square.area ? placed.square : placed.max) : (placed.max.area ? placed.max : packed.max)),
+          ox: region.minx,
+          oy: region.miny
+        };
+        if (live) this._liveLabel = { minute, text, fit: item.fit, place: item.place, ox: item.ox, oy: item.oy, onFilled };
+        items.push(item);
+      }
+
+      const med = median(items.map((it) => it.n));
+      let fontSize = Infinity;
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        const box = it.text.length <= 4
+          ? (it.fit.area ? it.fit : it.place)
+          : (it.place.area ? it.place : it.fit);
+        if (!box.area || it.n < med * 0.35) continue;
+        const size = fontFit(ctx, it.text, box.w * cw, box.h * ch,
+          it.text.length <= 4 ? LABEL_SHORT_FILL : labelFillFrac(unit.id));
+        if (size < fontSize) fontSize = size;
+      }
+      if (!isFinite(fontSize)) fontSize = 16;
+
+      ctx.font = "500 " + fontSize + "px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        const pr = it.place.area ? it.place : it.fit;
+        if (!pr.area) continue;
+        const tw = ctx.measureText(it.text).width;
+        if (tw > pr.w * cw * 0.98 || fontSize > pr.h * ch * 0.98) continue; // stay inside the square, hence inside the block
+        ctx.fillStyle = it.color;
+        ctx.fillText(it.text, (it.ox + pr.x + pr.w / 2) * cw, (it.oy + pr.y + pr.h / 2) * ch);
+      }
+    }
+
+    setZoomHighlight(box, range) {
+      this.zoomBox = box;
+      this.zoomRange = range || null;
+      if (!this.layout) return;
+      const now = nowMs();
+      const curId = this.layout.levels[0] && now >= this.start && now < this.end
+        ? this.layout.levels[0].index(now) : null;
+      this._renderOverlay(now, curId);
+    }
+  }
+
+  const presetBar = document.getElementById("presets");
+  const arbitraryRow = document.getElementById("arbitrary");
+  const arbFrom = document.getElementById("arb-from");
+  const arbTo = document.getElementById("arb-to");
+  const stage = document.getElementById("stage");
+  const connectors = document.getElementById("connectors");
+  const stackEl = document.getElementById("map-stack");
+  const slots = [];
+
+  function ensureSlot(i) {
+    while (slots.length <= i) {
+      const block = document.createElement("div");
+      block.className = "map-block";
+      const wrap = document.createElement("div");
+      wrap.className = slots.length > 0 ? "map map-zoom" : "map";
+      const cap = document.createElement("div");
+      cap.className = "caption";
+      block.appendChild(wrap);
+      block.appendChild(cap);
+      stackEl.appendChild(block);
+      slots.push({ block, map: new TimeMap(wrap, cap) });
+    }
+    slots[i].block.style.display = "";
+    return slots[i];
+  }
+
+  function hideSlotsFrom(i) {
+    for (let k = i; k < slots.length; k++) {
+      slots[k].block.style.display = "none";
+      slots[k].map.setZoomHighlight(null);
+    }
+  }
+
+  let mode = "today";
+  const layoutMode = "fit"; // only layout; Full was removed
+  let arbitrary = null;
+  let resizeTimer = 0;
+  let arbTimer = 0; // Custom dates: relayout 1s after the last input
+  let lastLayoutWidth = 0;
+  let lastLayoutHeight = 0;
+  let lastZoomKey = "";
+  let lastNavStamp = ""; // day+month+year of the preset labels — retitle 30th / August / 2026 at midnight
+  const FRAME_KEY = "clock-hilbert-frame";
+
+  function applyLayoutClass() {
+    document.documentElement.classList.add("fit-mode");
+    document.body.classList.add("fit-mode");
+  }
+
+  function saveFrame() {
+    try {
+      const data = { mode: mode, layout: "fit" };
+      if (arbitrary && Number.isFinite(arbitrary.start) && Number.isFinite(arbitrary.end) && arbitrary.end > arbitrary.start) {
+        data.arbitrary = { start: arbitrary.start, end: arbitrary.end };
+      }
+      localStorage.setItem(FRAME_KEY, JSON.stringify(data));
+    } catch (err) {}
+  }
+
+  function loadFrame() {
+    try {
+      const data = JSON.parse(localStorage.getItem(FRAME_KEY) || "null");
+      if (!data || typeof data !== "object") return;
+      if (data.arbitrary && Number.isFinite(+data.arbitrary.start) && Number.isFinite(+data.arbitrary.end) && +data.arbitrary.end > +data.arbitrary.start) {
+        arbitrary = { start: +data.arbitrary.start, end: +data.arbitrary.end };
+      }
+      if (data.mode === "today" || data.mode === "month" || data.mode === "year" || data.mode === "epoch" || data.mode === "arbitrary") {
+        if (data.mode !== "arbitrary" || arbitrary) mode = data.mode;
+      }
+    } catch (err) {}
+  }
+
+  function navStamp(now) { // 30th / August / 2026 — include the day so midnight retitles the first button
+    const d = new Date(now);
+    return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
+  }
+
+  function currentPresets() {
+    const n = new Date(nowMs());
+    return [
+      { id: "today", label: ordinalDay(n.getDate()) },
+      { id: "month", label: n.toLocaleString("en", { month: "long" }) },
+      { id: "year", label: String(n.getFullYear()) },
+      { id: "epoch", label: "Unix" },
+      { id: "arbitrary", label: "Custom" }
+    ];
+  }
+
+  function rangeForMode(id, now) { // presets are just [start, end); Custom is stored inclusive-end + 1 day
+    const d = new Date(now);
+    if (id === "today") {
+      return { start: startOfDay(d), end: new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime() };
+    }
+    if (id === "month") {
+      return { start: startOfMonth(d), end: new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime() };
+    }
+    if (id === "year") {
+      return { start: startOfYear(d), end: new Date(d.getFullYear() + 1, 0, 1).getTime() };
+    }
+    if (id === "epoch") {
+      return { start: 0, end: 2147483648000 };
+    }
+    if (id === "arbitrary" && arbitrary) return arbitrary;
+    return { start: startOfDay(d), end: new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime() };
+  }
+
+  function renderPresetBar() {
+    lastNavStamp = navStamp(nowMs());
+    presetBar.innerHTML = "";
+    currentPresets().forEach((p) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = p.label;
+      b.setAttribute("aria-pressed", p.id === mode ? "true" : "false");
+      b.addEventListener("click", () => setMode(p.id));
+      presetBar.appendChild(b);
+    });
+  }
+
+  function setMode(id) {
+    clearTimeout(arbTimer); // abandon a pending date edit if the user picked another preset
+    mode = id;
+    arbitraryRow.classList.toggle("open", id === "arbitrary");
+    if (id === "arbitrary" && !arbitrary) {
+      const r = rangeForMode("today", nowMs());
+      arbitrary = r;
+      arbFrom.value = localDateValue(r.start);
+      arbTo.value = localDateValue(r.end - 1);
+    }
+    saveFrame();
+    renderPresetBar();
+    relayout();
+  }
+
+  function followLiveCalendar(now) {
+    // Today / month / year are always the current period. On midnight, month
+    // roll, or New Year: retitle the nav and rebuild that map for the new range.
+    // Epoch and Custom keep their range; only the month/year button names move.
+    if (navStamp(now) !== lastNavStamp) renderPresetBar();
+    if (mode !== "today" && mode !== "month" && mode !== "year") return;
+    const r = rangeForMode(mode, now);
+    const main = slots[0] && slots[0].map;
+    if (main && main.start === r.start && main.end === r.end) return;
+    relayout();
+  }
+
+  function stageWidth() {
+    return Math.max(160, Math.round(stage.clientWidth || document.documentElement.clientWidth - 24));
+  }
+
+  function layoutMetrics() {
+    const width = stageWidth();
+    const vv = window.visualViewport;
+    const viewH = vv && vv.height ? vv.height : window.innerHeight;
+    const viewTop = vv && vv.offsetTop ? vv.offsetTop : 0;
+    const top = document.querySelector(".top-bar");
+    let topUsed = 8;
+    if (top) topUsed = top.getBoundingClientRect().bottom - viewTop;
+    const availH = Math.max(120, viewH - topUsed - 34);
+    return { width, aspect: clamp(width / availH, 0.42, 3.2), availH: availH };
+  }
+
+  function zoomChainKey(now) {
+    const main = slots[0] && slots[0].map;
+    if (!main || !main.layout) return "";
+    if (main.layout.grid.cellDur <= 1000) return "none";
+    if (!main.zoomRange) return "need";
+    if (!main.zoomContainsNow(now)) return "moved";
+    return main.zoomRange.start + "-" + main.zoomRange.end;
+  }
+
+  function chromeHeight() {
+    let h = 20;
+    const top = document.querySelector(".top-bar");
+    if (top) h += top.getBoundingClientRect().height + 10; // dates live in the top-bar; do not add them twice
+    return h;
+  }
+
+  function fitSlots() {
+    return slots.filter((s) => s.block.style.display !== "none" && s.map.layout);
+  }
+
+  function availBox() {
+    if (layoutMode === "fit") {
+      const st = getComputedStyle(stage);
+      const pl = parseFloat(st.paddingLeft) || 0;
+      const pr = parseFloat(st.paddingRight) || 0;
+      const pt = parseFloat(st.paddingTop) || 0;
+      const pb = parseFloat(st.paddingBottom) || 0;
+      const w = stage.clientWidth - pl - pr;
+      const h = stage.clientHeight - pt - pb;
+      if (w > 40 && h > 40) return { w: w, h: h };
+    }
+    return {
+      w: stageWidth(),
+      h: Math.max(160, window.innerHeight - chromeHeight())
+    };
+  }
+
+  function captionExtra(slot) {
+    const el = slot.block.querySelector(".caption");
+    if (!el) return 22;
+    return Math.max(18, Math.ceil(el.getBoundingClientRect().height) + 4);
+  }
+
+  function packFit(availW, availH) {
+    // Two panels: equal tiles. Row vs column = whichever gives more map area.
+    const vis = fitSlots();
+    const n = vis.length;
+    if (!n) return { dir: "col", widths: [], heights: [] };
+    const caps = vis.map(captionExtra);
+    const capMax = Math.max.apply(null, caps);
+    const capSum = caps.reduce((a, b) => a + b, 0);
+    const gap = n > 1 ? 16 : 0;
+
+    if (n === 1) {
+      const r = vis[0].map.layout.grid.h / vis[0].map.layout.grid.w;
+      const w = Math.max(80, Math.min(availW, Math.floor((availH - caps[0]) / Math.max(1e-6, r))));
+      return { dir: "col", widths: [w], heights: [Math.max(80, Math.round(w * r))] };
+    }
+
+    const colW = Math.max(80, Math.floor(availW));
+    const colH = Math.max(80, Math.floor((availH - capSum) / n));
+    const rowW = Math.max(80, Math.floor((availW - gap) / n));
+    const rowH = Math.max(80, Math.floor(availH - capMax));
+    const col = {
+      dir: "col",
+      widths: vis.map(() => colW),
+      heights: vis.map(() => colH),
+      area: n * colW * colH
+    };
+    const row = {
+      dir: "row",
+      widths: vis.map(() => rowW),
+      heights: vis.map(() => rowH),
+      area: n * rowW * rowH
+    };
+    return row.area > col.area ? row : col;
+  }
+
+  function applySlotBox(slot, tileW, tileH) { // equal Fit frame; map letterboxes inside
+    slot.map.setDisplaySize(tileW, tileH);
+    slot.block.style.width = tileW + "px";
+    slot.block.style.height = (tileH + captionExtra(slot)) + "px";
+  }
+
+  function clearSlotBoxes() {
+    for (let i = 0; i < slots.length; i++) {
+      slots[i].block.style.width = "";
+      slots[i].block.style.height = "";
+    }
+  }
+
+  function applyFitPack(pack, now, rebuildGrids) {
+    stackEl.classList.toggle("fit-row", pack.dir === "row");
+    stackEl.classList.toggle("fit-col", pack.dir !== "row");
+    const vis = fitSlots();
+    const w = Math.max(80, Math.round(pack.widths[0]));
+    const h = Math.max(80, Math.round(pack.heights[0]));
+    if (rebuildGrids && vis[0]) {
+      vis[0].map.rebuild(w, clamp(w / h, 0.42, 3.2));
+      updateZoom(now, true, w);
+    }
+    const vis2 = fitSlots();
+    for (let i = 0; i < vis2.length; i++) {
+      applySlotBox(vis2[i], w, h);
+    }
+  }
+
+  function rebuildNatural(main) { // Today, one panel: same picture as the old Full layout — do not probe half-width / two columns
+    const metrics = layoutMetrics();
+    main.rebuild(metrics.width, metrics.aspect);
+    if (main.layout && metrics.availH && main.cssH < metrics.availH * 0.78) {
+      const fillAspect = clamp(metrics.width / Math.max(120, metrics.availH), 0.42, 3.2);
+      if (Math.abs((main.layout.grid.w / main.layout.grid.h) - fillAspect) > 0.12) {
+        main.rebuild(metrics.width, fillAspect);
+      }
+    }
+  }
+
+  function relayout() {
+    applyLayoutClass();
+    const now = nowMs();
+    const range = rangeForMode(mode, now);
+    lastLayoutWidth = stageWidth();
+    lastLayoutHeight = window.innerHeight;
+    const main = ensureSlot(0).map;
+    main.setRange(range.start, range.end);
+    lastZoomKey = "";
+    stackEl.classList.remove("fit-row", "fit-col");
+
+    if (mode === "today") {
+      rebuildNatural(main);
+      updateZoom(now, true);
+      if (fitSlots().length < 2) { // one panel: do not rebuild into Fit tiles
+        clearSlotBoxes();
+        enforceFitInStage();
+        return;
+      }
+    } else {
+      const box = availBox();
+      const wide = box.w >= box.h * 1.05;
+      const probeW = wide ? Math.max(160, Math.floor((box.w - 16) / 2)) : Math.max(160, box.w);
+      const probeH = wide ? Math.max(120, box.h - 24) : Math.max(120, Math.floor((box.h - 48) / 2));
+      main.rebuild(probeW, clamp(probeW / probeH, 0.42, 3.2));
+      updateZoom(now, true, probeW);
+    }
+
+    for (let i = 0; i < 3; i++) {
+      const pack = packFit(availBox().w, availBox().h);
+      if (!pack.widths.length) break;
+      const same =
+        (pack.dir === "row" ? stackEl.classList.contains("fit-row") : stackEl.classList.contains("fit-col")) &&
+        visWidthClose(pack);
+      applyFitPack(pack, now, !same);
+      if (same) break;
+    }
+    enforceFitInStage();
+  }
+
+  function fitPaintBounds() {
+    const vis = fitSlots();
+    let minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
+    for (let i = 0; i < vis.length; i++) {
+      const hl = vis[i].map.hl;
+      const wrap = vis[i].map.wrap;
+      const cap = vis[i].block.querySelector(".caption");
+      const boxes = [hl, wrap, cap];
+      for (let b = 0; b < boxes.length; b++) {
+        if (!boxes[b]) continue;
+        const r = boxes[b].getBoundingClientRect();
+        if (!r.width && !r.height) continue;
+        minL = Math.min(minL, r.left);
+        minT = Math.min(minT, r.top);
+        maxR = Math.max(maxR, r.right);
+        maxB = Math.max(maxB, r.bottom);
+      }
+    }
+    return { minL: minL, minT: minT, maxR: maxR, maxB: maxB };
+  }
+
+  function enforceFitInStage() { // uniform shrink if paint (incl. yellow frame) overflows the stage; grid unchanged
+    const vis = fitSlots();
+    if (!vis.length) return;
+    const stageRect = stage.getBoundingClientRect();
+    const pad = 2;
+    const inner = {
+      left: stageRect.left + pad,
+      top: stageRect.top + pad,
+      right: stageRect.right - pad,
+      bottom: stageRect.bottom - pad
+    };
+    const b = fitPaintBounds();
+    if (!Number.isFinite(b.minL)) return;
+    const contentW = Math.max(1, b.maxR - b.minL);
+    const contentH = Math.max(1, b.maxB - b.minT);
+    const innerW = Math.max(80, inner.right - inner.left);
+    const innerH = Math.max(80, inner.bottom - inner.top);
+    const overflow = b.minL < inner.left - 1 || b.minT < inner.top - 1 ||
+      b.maxR > inner.right + 1 || b.maxB > inner.bottom + 1;
+    if (!overflow) return;
+    const s = Math.min(innerW / contentW, innerH / contentH) * 0.97;
+    if (!(s < 0.999) || s <= 0) return;
+    for (let i = 0; i < vis.length; i++) {
+      const tw = vis[i].map.tileW || vis[i].map.cssW;
+      const th = vis[i].map.tileH || vis[i].map.cssH;
+      applySlotBox(vis[i], Math.max(80, Math.floor(tw * s)), Math.max(80, Math.floor(th * s)));
+    }
+    requestAnimationFrame(drawAllConnectors);
+  }
+
+  function visWidthClose(pack) {
+    const vis = fitSlots();
+    if (vis.length !== pack.widths.length) return false;
+    for (let i = 0; i < vis.length; i++) {
+      const tw = vis[i].map.tileW || vis[i].map.cssW;
+      const th = vis[i].map.tileH || vis[i].map.cssH;
+      if (Math.abs(tw - pack.widths[i]) > 6) return false;
+      if (Math.abs(th - pack.heights[i]) > 6) return false;
+    }
+    return true;
+  }
+
+  function scheduleRelayout() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const w = stageWidth();
+      const h = window.innerHeight;
+      if (Math.abs(w - lastLayoutWidth) < 8 && Math.abs(h - lastLayoutHeight) < 8) {
+        requestAnimationFrame(drawAllConnectors);
+        return;
+      }
+      relayout();
+    }, 120);
+  }
+
+  function updateZoom(now, force, insetCssWidth) { // one inset; hide it when the parent cell is already ≤1s
+    const main = slots[0] && slots[0].map;
+    if (!main || !main.layout) return;
+    const minute = Math.floor(now / 60000);
+    let win = null;
+    if (main.zoomRange && now >= main.zoomRange.start && now < main.zoomRange.end && main._zoomMinute === minute) {
+      win = main.remapZoomRange(main.zoomRange.start, main.zoomRange.end);
+    }
+    if (!win) {
+      win = main.pickZoomWindow(now);
+      if (win) main._zoomMinute = minute;
+    }
+    if (!win) {
+      main.setZoomHighlight(null);
+      hideSlotsFrom(1);
+      lastZoomKey = "none";
+      requestAnimationFrame(drawAllConnectors);
+      return;
+    }
+    const cssW = Math.max(80, Math.round(insetCssWidth || main.cssW));
+    const rangeKey = win.start + "-" + win.end;
+    const layoutKey = rangeKey + ":" + win.box.w + "x" + win.box.h + "k" + win.k + "@" + cssW;
+    main.setZoomHighlight(win.box, { start: win.start, end: win.end });
+    const inset = ensureSlot(1).map;
+    if (force || inset._cropKey !== layoutKey) {
+      inset.rebuildZoom(cssW, main.layout, win);
+      inset._cropKey = layoutKey;
+    } else if (Math.abs(inset.cssW - cssW) > 1) {
+      inset.setDisplayWidth(cssW);
+    }
+    hideSlotsFrom(2);
+    lastZoomKey = rangeKey;
+    if (main.tileW > 8 && main.tileH > 8 && fitSlots().length > 1) {
+      applySlotBox(slots[1], main.tileW, main.tileH);
+    } else {
+      inset.setDisplayWidth(main.cssW);
+    }
+    requestAnimationFrame(drawAllConnectors);
+  }
+
+  function drawAllConnectors() {
+    const svgNS = "http://www.w3.org/2000/svg";
+    while (connectors.firstChild) connectors.removeChild(connectors.firstChild);
+    const stageRect = stage.getBoundingClientRect();
+    connectors.setAttribute("viewBox", "0 0 " + stageRect.width + " " + stageRect.height);
+    connectors.setAttribute("width", String(stageRect.width));
+    connectors.setAttribute("height", String(stageRect.height));
+    for (let i = 0; i < slots.length - 1; i++) {
+      const a = slots[i];
+      const b = slots[i + 1];
+      if (a.block.style.display === "none" || b.block.style.display === "none") continue;
+      const box = a.map.zoomBox;
+      if (!box || !a.map.layout) continue;
+      const grid = a.map.layout.grid;
+      const mainRect = a.map.wrap.getBoundingClientRect();
+      const insetRect = b.map.wrap.getBoundingClientRect();
+      const cw = a.map.cssW / grid.w;
+      const ch = a.map.cssH / grid.h;
+      const ox = mainRect.left - stageRect.left;
+      const oy = mainRect.top - stageRect.top;
+      const ix = insetRect.left - stageRect.left;
+      const iy = insetRect.top - stageRect.top;
+      const side = stackEl.classList.contains("fit-row");
+      const corners = side ? [ // row: from the right edge of the yellow box to the left of the inset
+        [ox + (box.x + box.w) * cw, oy + box.y * ch, ix, iy],
+        [ox + (box.x + box.w) * cw, oy + (box.y + box.h) * ch, ix, iy + insetRect.height]
+      ] : [ // column / stack: from the bottom edge of the yellow box to the top of the inset
+        [ox + box.x * cw, oy + (box.y + box.h) * ch, ix, iy],
+        [ox + (box.x + box.w) * cw, oy + (box.y + box.h) * ch, ix + insetRect.width, iy]
+      ];
+      for (let k = 0; k < corners.length; k++) {
+        const line = document.createElementNS(svgNS, "line");
+        line.setAttribute("x1", corners[k][0]);
+        line.setAttribute("y1", corners[k][1]);
+        line.setAttribute("x2", corners[k][2]);
+        line.setAttribute("y2", corners[k][3]);
+        connectors.appendChild(line);
+      }
+    }
+  }
+
+  function applyArbitraryFromInputs() {
+    const a = parseDateInput(arbFrom.value);
+    const b = parseDateInput(arbTo.value);
+    if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return;
+    const end = new Date(b);
+    end.setDate(end.getDate() + 1); // date inputs are inclusive; engine range is [start, end)
+    const endMs = end.getTime();
+    if (mode === "arbitrary" && arbitrary && arbitrary.start === a && arbitrary.end === endMs) return;
+    arbitrary = { start: a, end: endMs };
+    mode = "arbitrary";
+    arbitraryRow.classList.add("open");
+    saveFrame();
+    renderPresetBar();
+    relayout();
+  }
+
+  function scheduleArbitraryApply() {
+    clearTimeout(arbTimer);
+    arbTimer = setTimeout(applyArbitraryFromInputs, 1000);
+  }
+
+  arbFrom.addEventListener("input", scheduleArbitraryApply);
+  arbTo.addEventListener("input", scheduleArbitraryApply);
+
+  window.addEventListener("resize", scheduleRelayout);
+  window.addEventListener("orientationchange", () => {
+    lastLayoutWidth = 0;
+    setTimeout(relayout, 200);
+  });
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(scheduleRelayout).observe(stage);
+  }
+
+  function loop() {
+    const now = nowMs();
+    followLiveCalendar(now);
+    let finest = 1000;
+    for (let i = 0; i < slots.length; i++) {
+      if (slots[i].block.style.display === "none" || !slots[i].map.layout) continue;
+      slots[i].map.tick(now);
+      finest = Math.min(finest, slots[i].map.layout.grid.cellDur);
+    }
+    if (zoomChainKey(now) !== lastZoomKey) updateZoom(now);
+    const step = Math.max(16, Math.min(1000, finest));
+    setTimeout(loop, clamp(step - (now % step), 16, 1000));
+  }
+
+  loadTheme();
+  loadFrame();
+  applyLayoutClass();
+  renderPresetBar();
+  arbitraryRow.classList.toggle("open", mode === "arbitrary");
+  const now = nowMs();
+  if (arbitrary) {
+    arbFrom.value = localDateValue(arbitrary.start);
+    arbTo.value = localDateValue(arbitrary.end - 1);
+  } else {
+    const today = rangeForMode("today", now);
+    arbFrom.value = localDateValue(today.start);
+    arbTo.value = localDateValue(today.end - 1);
+  }
+  relayout();
+  loop();
+})();
+  </script>
+</body>
+</html>
