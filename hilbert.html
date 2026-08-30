@@ -25,12 +25,12 @@
       --accent: #e8918e; /* pressed preset label */
       --input-bg: #111; /* Custom date fields */
       --past: #a6a6a6; /* elapsed cells (not in the live unit) */
-      --future: #141414; /* cells still ahead */
+      --future: #161616; /* cells still ahead */
       --cur-past: #c7a4a4; /* elapsed cells inside the live coarsest unit */
       --cur-future: #3a2222; /* remaining cells inside the live unit */
       --head: #ff0000; /* the living cell (now) */
       --surplus: #000000; /* leftover cells past the range */
-      --label: #848484; /* labels on filled (past) regions */
+      --label: #6c6c6c; /* labels on filled (past) regions */
       --label-empty: #5e5e5e; /* labels on empty (future) regions */
       --label-live: #7a7268; /* live-unit label on the filled half */
       --label-live-empty: #7a6c5c; /* live-unit label on the empty half */
@@ -111,17 +111,15 @@
       box-sizing: border-box;
     }
     #map-stack.fit-row {
-      display: flex;
-      flex-direction: row;
-      align-items: flex-start;
-      justify-content: center;
-      gap: 16px; /* STACK_GAP — keep in sync with packFit row gap */
+      display: grid;
+      grid-template-columns: 1fr 1fr; /* each map owns half the stage */
+      align-items: center;
+      justify-items: center;
+      width: 100%;
+      height: 100%;
       max-width: 100%;
       max-height: 100%;
       box-sizing: border-box;
-    }
-    #map-stack.fit-row .map-block:nth-child(2) {
-      align-self: center; /* inset sits mid-height against the parent map */
     }
     #map-stack.fit-row .map-block,
     #map-stack.fit-col .map-block {
@@ -386,7 +384,6 @@
   const AVAIL_H_CHROME = 34; // extra chrome subtracted from viewportRemainH
   const AVAIL_H_MIN = 120; // never treat remaining height as smaller than this
   const TILE_MIN = 80; // smallest Fit tile side
-  const STACK_GAP = 16; // row: space between the two maps (CSS + packFit)
   const STACK_COL_GAP = 28; // column: keep the caption from kissing the next map
   const CAPTION_FALLBACK = 22; // caption height if the node is not laid out yet
   const CAPTION_MIN = 18; // never reserve less than this under a tile
@@ -1462,11 +1459,12 @@
       const tileH = this.tileH || this.cssH;
       const matchAspect = zoomWantParentAspect();
       const parentAspect = grid.w / grid.h;
-      let preferred = null;
-      let preferredScore = -Infinity;
-      let readableUp = null;
-      let readableUpArea = Infinity;
-      let readableUpErr = Infinity;
+      const parentTall = parentAspect < 1 - GRID_ORIENT_EPS;
+      const parentWide = parentAspect > 1 + GRID_ORIENT_EPS;
+      let best = null;
+      let bestScore = -Infinity;
+      let flipped = null;
+      let flippedScore = -Infinity;
       let fallback = null;
       let fallbackPx = -1;
       let fallbackErr = Infinity;
@@ -1484,20 +1482,21 @@
         const win = { i0, i1, start: zStart, end: zEnd, box: block.box, k: plan.k };
         const px = estimateInsetLabelPx(zStart, zEnd, block.box, plan.k, grid.cellDur, tileW, tileH);
         const err = matchAspect ? zoomBoxAspectErr(block.box, parentAspect) : 0;
-        const score = block.area * ZOOM_AREA_SCORE - plan.D - err * ZOOM_ASPECT_WEIGHT;
+        let score = block.area * ZOOM_AREA_SCORE - plan.D - err * ZOOM_ASPECT_WEIGHT;
+        if (block.area > target) score -= (block.area - target) * ZOOM_AREA_SCORE; // overshoot is allowed if aspect matches, but costs
+        const flip = matchAspect && (
+          (parentTall && block.box.w > block.box.h) ||
+          (parentWide && block.box.h > block.box.w)
+        );
         if (px >= ZOOM_LABEL_MIN_PX) {
-          if (block.area <= target) {
-            if (score > preferredScore) {
-              preferredScore = score;
-              preferred = win;
+          if (flip) {
+            if (score > flippedScore) {
+              flippedScore = score;
+              flipped = win;
             }
-          } else if (matchAspect
-            ? (err + ZOOM_ASPECT_LOG_TIE < readableUpErr ||
-              (err <= readableUpErr + ZOOM_ASPECT_LOG_TIE && block.area < readableUpArea))
-            : block.area < readableUpArea) {
-            readableUpArea = block.area;
-            readableUpErr = err;
-            readableUp = win; // smallest / closest-aspect window above the target that still reads
+          } else if (score > bestScore) {
+            bestScore = score;
+            best = win;
           }
         } else if (px > fallbackPx || (px === fallbackPx && err < fallbackErr)) {
           fallbackPx = px;
@@ -1505,7 +1504,7 @@
           fallback = win;
         }
       }
-      return preferred || readableUp || fallback;
+      return best || flipped || fallback;
     }
 
     remapZoomRange(zStart, zEnd) {
@@ -1526,6 +1525,12 @@
           const tileH = this.tileH || this.cssH;
           const px = estimateInsetLabelPx(zStart, zEnd, box, plan.k, grid.cellDur, tileW, tileH);
           if (px < ZOOM_LABEL_MIN_PX) return null; // too fine — pickZoomWindow will coarsen
+          if (zoomWantParentAspect()) {
+            const pa = grid.w / grid.h;
+            const flip = (pa < 1 - GRID_ORIENT_EPS && box.w > box.h) ||
+              (pa > 1 + GRID_ORIENT_EPS && box.h > box.w);
+            if (flip) return null; // landscape window on a tall parent — re-pick
+          }
           return { i0, i1, start: zStart, end: zEnd, box, k: plan.k };
         }
       }
@@ -2291,7 +2296,6 @@
     const caps = vis.map(captionExtra);
     const capMax = Math.max.apply(null, caps);
     const capSum = caps.reduce((a, b) => a + b, 0);
-    const gap = n > 1 ? STACK_GAP : 0;
     const colGap = n > 1 ? STACK_COL_GAP : 0;
 
     if (n === 1) {
@@ -2302,7 +2306,7 @@
 
     const colW = Math.max(TILE_MIN, Math.floor(availW));
     const colH = Math.max(TILE_MIN, Math.floor((availH - capSum - colGap) / n));
-    const rowW = Math.max(TILE_MIN, Math.floor((availW - gap) / n));
+    const rowW = Math.max(TILE_MIN, Math.floor(availW / n)); // each tile is one half; CSS centers the letterboxed block in it
     const rowH = Math.max(TILE_MIN, Math.floor(availH - capMax));
     const col = {
       dir: "col",
@@ -2392,7 +2396,7 @@
     } else {
       const box = availBox();
       const wide = !pageIsPortrait() && box.w >= box.h * WIDE_STAGE_RATIO;
-      const probeW = wide ? Math.max(STAGE_MIN_W, Math.floor((box.w - STACK_GAP) / 2)) : Math.max(STAGE_MIN_W, box.w);
+      const probeW = wide ? Math.max(STAGE_MIN_W, Math.floor(box.w / 2)) : Math.max(STAGE_MIN_W, box.w);
       const probeH = wide ? Math.max(AVAIL_H_MIN, box.h - STAGE_GUTTER) : Math.max(AVAIL_H_MIN, Math.floor((box.h - PROBE_ROW_CAP) / 2));
       main.rebuild(probeW, clamp(probeW / probeH, ASPECT_MIN, ASPECT_MAX));
       updateZoom(now, true, probeW);
