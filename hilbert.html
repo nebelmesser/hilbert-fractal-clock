@@ -1,11 +1,12 @@
 <!DOCTYPE html>
 <!-- 
   One-file Hilbert time map. Range → 2D curve. Fit-only.
-  Colors live in :root. Each zoom level is an n×n grid of non-overlapping
-  same-aspect insets that cover the parent; +/− doubles n (halves the tile side).
-  Coarsest n is the largest tile with inset cell ≤1s. Current tile contains now;
-  when it fills, follow the curve to the next unfilled tile.
-  Yellow frame sits outside the zoom box. Equal Fit tiles; both maps fill the tile.
+  Colors live in :root. Each zoom level is one Gilbert-partition depth: packed
+  Hilbert cells that cover the parent without holes. +/− steps those depths
+  (sizes follow the tree, not 2/4/8). Coarsest depth keeps inset D ≤1s.
+  Current tile is the leaf that contains now; when it fills, the next leaf
+  along the curve. Prefer a whole partition over a half-panel crop.
+  Yellow frame sits outside the zoom box. Equal Fit tiles.
   Today with one panel keeps the natural day picture — do not two-column pack it.
   Made by Nebelmesser ver. 1.0 @ 2026-08-30. MIT License.
   https://github.com/nebelmesser/playground
@@ -260,9 +261,9 @@
   </div>
   <script>
 // One-file Hilbert time map. Range → 2D curve. Fit-only. No weeks.
-// Colors live in :root. Each zoom level tiles the parent with a fixed n×n grid
-// of same-aspect insets; +/− halves the tile side. Inset D is any value ≤1s.
-// Yellow frame sits outside the zoom box. Equal Fit tiles; both maps fill the tile.
+// Colors live in :root. Each zoom level is a Gilbert-partition depth (packed
+// Hilbert cells). +/− follows those cell sizes, not a 2/4/8 grid. Inset D is
+// any value ≤1s. Yellow frame sits outside the zoom box. Equal Fit tiles.
 // Today with one panel keeps the natural day picture — do not two-column pack it.
 (function () {
   "use strict";
@@ -704,6 +705,8 @@
   }
 
   const ZOOM_MIN_AREA = 8; // smallest packed parent block we will zoom (must match collectHilbertBlocks)
+  const HILBERT_ZOOM_MAX_DEPTH = 12; // Gilbert children at this depth are already tiny
+  const ZOOM_DEPTH_AREA_RATIO = 1.15; // skip a depth whose largest leaf is this close to the last kept size
 
   function walkHilbertPartitions(width, height, visit, nowIdx, stopArea) { // Gilbert split; optional nowIdx prune; stopArea skips children
     function walk(x, y, ax, ay, bx, by, iStart) {
@@ -742,6 +745,58 @@
       }
     }
     walk(0, 0, width, 0, 0, height, 0);
+  }
+
+  function gilbertSplitWalk(x, y, ax, ay, bx, by, iStart, depth, w, h, walkChild) { // one Gilbert 2- or 3-way split
+    const dax = sign(ax), day = sign(ay);
+    const dbx = sign(bx), dby = sign(by);
+    let ax2 = Math.floor(ax / 2), ay2 = Math.floor(ay / 2);
+    let bx2 = Math.floor(bx / 2), by2 = Math.floor(by / 2);
+    const w2 = Math.abs(ax2 + ay2);
+    const h2 = Math.abs(bx2 + by2);
+    if (2 * w > 3 * h) {
+      if ((w2 % 2) && (w > 2)) { ax2 += dax; ay2 += day; }
+      const a1 = Math.abs(ax2 + ay2) * h;
+      walkChild(x, y, ax2, ay2, bx, by, iStart, depth + 1);
+      walkChild(x + ax2, y + ay2, ax - ax2, ay - ay2, bx, by, iStart + a1, depth + 1);
+    } else {
+      if ((h2 % 2) && (h > 2)) { bx2 += dbx; by2 += dby; }
+      const a1 = Math.abs(bx2 + by2) * Math.abs(ax2 + ay2);
+      const a2 = w * Math.abs((bx - bx2) + (by - by2));
+      walkChild(x, y, bx2, by2, ax2, ay2, iStart, depth + 1);
+      walkChild(x + bx2, y + by2, ax, ay, bx - bx2, by - by2, iStart + a1, depth + 1);
+      walkChild(
+        x + (ax - dax) + (bx2 - dbx),
+        y + (ay - day) + (by2 - dby),
+        -bx2, -by2, -(ax - ax2), -(ay - ay2),
+        iStart + a1 + a2, depth + 1
+      );
+    }
+  }
+
+  function gilbertCoverWalk(width, height, nowIdx, maxDepth, visitLeaf) { // packed leaves at one partition depth; nowIdx prunes
+    function walk(x, y, ax, ay, bx, by, iStart, depth) {
+      const w = Math.abs(ax + ay);
+      const h = Math.abs(bx + by);
+      const area = w * h;
+      const iEnd = iStart + area;
+      if (nowIdx != null && (nowIdx < iStart || nowIdx >= iEnd)) return;
+      if (h === 1 || w === 1 || depth >= maxDepth) {
+        visitLeaf(hilbertCellRect(x, y, ax, ay, bx, by), iStart, iEnd, area);
+        return;
+      }
+      gilbertSplitWalk(x, y, ax, ay, bx, by, iStart, depth, w, h, walk);
+    }
+    walk(0, 0, width, 0, 0, height, 0, 0);
+  }
+
+  function gilbertLeafAt(width, height, nowIdx, depth) { // the unique packed cell at this depth that contains nowIdx
+    if (!(depth >= 1) || nowIdx == null || nowIdx < 0) return null;
+    let found = null;
+    gilbertCoverWalk(width, height, nowIdx, depth, (box, i0, i1, area) => {
+      found = { box: box, i0: i0, i1: i1, area: area };
+    });
+    return found;
   }
 
   function collectHilbertBlocks(width, height, nowIdx, maxArea) { // packed partitions that contain now, area ≤ maxArea
@@ -1190,9 +1245,15 @@
   function insetPlanForBox(grid, box, cssWidth) { // k×k with inset D in [1ms, 1s]; k=1 when the parent is already 1s
     const k = chooseZoomK(grid.cellDur, box.w, box.h, cssWidth, grid.w, grid.h);
     if (k < 1) return null;
-    const D = grid.cellDur / (k * k);
+    let D = grid.cellDur / (k * k);
+    if (D <= INSET_MAX_D + 1) return { k: k, D: D };
+    const kNeed = Math.max(1, Math.ceil(Math.sqrt(grid.cellDur / INSET_MAX_D) - 1e-12));
+    D = grid.cellDur / (kNeed * kNeed);
     if (D > INSET_MAX_D + 1) return null;
-    return { k: k, D: D };
+    const cells = box.w * box.h * kNeed * kNeed;
+    const parentN = Math.max(1, grid.w * grid.h);
+    if (cells > Math.max(MAX_CELLS_HARD, parentN * 2.5)) return null; // FILL half-side may need a slightly larger inset than chooseZoomK allows
+    return { k: kNeed, D: D };
   }
 
   function letterboxIn(aspect, boxW, boxH) { // largest aspect-w/h rectangle that fits in boxW×boxH
@@ -1217,74 +1278,79 @@
     return Math.abs(Math.log(a / Math.max(1e-6, targetAspect)));
   }
 
-  function zoomFamilyAspect(boxes, parentAspect) { // inset always follows the parent panel
-    return parentAspect;
-  }
-
-  function zoomTileEdge(len, n, i) { // n×n cover: edge i of 0..n, last edge is len
-    return Math.round(i * len / n);
-  }
-
-  function zoomColAt(len, n, v) { // which strip of an n-way split contains cell v
-    let lo = 0, hi = n - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (zoomTileEdge(len, n, mid) <= v) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo;
-  }
-
-  function makeZoomTiling(width, height, n) { // n×n same-aspect tiles; no overlap, full cover
-    const tiles = [];
-    for (let row = 0; row < n; row++) {
-      const y = zoomTileEdge(height, n, row);
-      const h = zoomTileEdge(height, n, row + 1) - y;
-      if (h < 1) continue;
-      for (let col = 0; col < n; col++) {
-        const x = zoomTileEdge(width, n, col);
-        const w = zoomTileEdge(width, n, col + 1) - x;
-        if (w < 1) continue;
-        tiles.push({ x, y, w, h, col, row });
-      }
-    }
-    return tiles;
-  }
-
-  function zoomTileAtCell(width, height, n, x, y) { // the unique covering tile for parent cell (x,y)
-    const col = zoomColAt(width, n, x);
-    const row = zoomColAt(height, n, y);
-    const x0 = zoomTileEdge(width, n, col);
-    const y0 = zoomTileEdge(height, n, row);
-    return {
-      x: x0, y: y0,
-      w: zoomTileEdge(width, n, col + 1) - x0,
-      h: zoomTileEdge(height, n, row + 1) - y0,
-      col, row
-    };
-  }
-
   function boxContainsCell(box, g, nowIdx) { // now's parent cell sits inside the yellow box
     const x = g.xs[nowIdx], y = g.ys[nowIdx];
     return x >= box.x && y >= box.y && x < box.x + box.w && y < box.y + box.h;
   }
 
-  function zoomLevelNs(grid, cssW) { // valid n=2,4,8… ; coarsest first; skip tiles with D > 1s
-    const out = [];
-    for (let z = 1; z < 12; z++) {
-      const n = 1 << z;
-      if (n > grid.w || n > grid.h) break;
-      const tw = Math.max(1, zoomTileEdge(grid.w, n, 1) - zoomTileEdge(grid.w, n, 0));
-      const th = Math.max(1, zoomTileEdge(grid.h, n, 1) - zoomTileEdge(grid.h, n, 0));
-      if (tw * th < ZOOM_MIN_AREA) break;
-      const plan = insetPlanForBox(grid, { w: tw, h: th }, cssW);
-      if (!plan) continue;
-      out.push({ n, w: tw, h: th, area: tw * th, k: plan.k, D: plan.D, level: z });
+  function hilbertDepthInfo(width, height, depth, parentAspect) { // packed leaves at this Gilbert depth
+    let maxArea = 0, minArea = Infinity, n = 0, fillN = 0;
+    let maxBox = null;
+    let fillArea = 0, fillCount = 0, fillW = 0, fillH = 0;
+    const fillSizes = {};
+    gilbertCoverWalk(width, height, null, depth, (box, i0, i1, area) => {
+      if (box.w * box.h !== area) return;
+      n++;
+      if (area > maxArea) {
+        maxArea = area;
+        maxBox = { x: box.x, y: box.y, w: box.w, h: box.h };
+      }
+      if (area < minArea) minArea = area;
+      if (zoomBoxAspectErr(box, parentAspect) <= ZOOM_ASPECT_LOG_TIE) {
+        fillN++;
+        const key = box.w + "x" + box.h;
+        const c = (fillSizes[key] || 0) + 1;
+        fillSizes[key] = c;
+        if (c > fillCount || (c === fillCount && area > fillArea)) {
+          fillCount = c;
+          fillArea = area;
+          fillW = box.w;
+          fillH = box.h;
+        }
+      }
+    });
+    return { depth, n, maxArea, minArea, maxBox, fillN, fillArea, fillW, fillH };
+  }
+
+  const hilbertZoomCache = new Map();
+
+  function hilbertZoomLevels(grid, cssW) { // coarsest-first Gilbert depths; skip strip-only steps when a whole cell exists
+    const key = grid.w + "x" + grid.h + ":" + grid.cellDur + ":" + Math.round(cssW || 0);
+    const hit = hilbertZoomCache.get(key);
+    if (hit) return hit;
+    const parentAspect = grid.w / Math.max(1, grid.h);
+    const raw = [];
+    for (let d = 1; d <= HILBERT_ZOOM_MAX_DEPTH; d++) {
+      const info = hilbertDepthInfo(grid.w, grid.h, d, parentAspect);
+      if (!info.maxBox || info.maxArea < ZOOM_MIN_AREA) break;
+      const fillBox = info.fillW ? { w: info.fillW, h: info.fillH } : null;
+      const planFill = fillBox ? insetPlanForBox(grid, fillBox, cssW) : null;
+      const planMax = insetPlanForBox(grid, info.maxBox, cssW);
+      if (!planFill && !planMax) continue;
+      if (raw.length && info.maxArea > raw[raw.length - 1].maxArea / ZOOM_DEPTH_AREA_RATIO) continue;
+      const plan = planFill || planMax;
+      raw.push({
+        depth: d,
+        w: info.fillW || info.maxBox.w,
+        h: info.fillH || info.maxBox.h,
+        area: info.fillArea || info.maxArea,
+        maxArea: info.maxArea,
+        k: plan.k,
+        D: plan.D,
+        fillN: info.fillN
+      });
     }
+    const out = [];
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i].fillN === 0 && out.length) continue; // half-panel strips — keep the whole cells at the next depth
+      out.push(raw[i]);
+    }
+    if (hilbertZoomCache.size >= 24) hilbertZoomCache.delete(hilbertZoomCache.keys().next().value);
+    hilbertZoomCache.set(key, out);
     return out;
   }
 
-  function pickZoomLevel(levels, storedArea) { // 0 / 1e15 → coarsest (largest tile with D ≤ 1s)
+  function pickZoomLevel(levels, storedArea) { // 0 / 1e15 → coarsest (largest packed cells with D ≤ 1s)
     if (!levels.length) return null;
     let best = levels[0];
     if (storedArea > 0 && storedArea < 1e14) {
@@ -1300,30 +1366,31 @@
     return best;
   }
 
-  function dyadicZoomTargets(grid) { // kept for callers that only need sizes; prefers n-grid tiles
-    return zoomLevelNs(grid, 0).map((L) => ({ w: L.w, h: L.h, area: L.area, level: L.level, n: L.n }));
-  }
-
-  function matchZoomBlock(blocks, wantW, wantH, parentAspect) { // packed same-aspect block nearest this dyadic size
-    const wantArea = wantW * wantH;
-    let exact = null;
+  function pickPackedZoomBlock(width, height, nowIdx, maxArea, grid, cssW, parentAspect, wantW, wantH) { // packed same-size Hilbert tiles first; else largest whole cell ≤ maxArea
+    if (wantW >= 1 && wantH >= 1) {
+      const tiles = collectHilbertTiles(width, height, wantW, wantH);
+      let containing = null;
+      for (let i = 0; i < tiles.length; i++) {
+        const t = tiles[i];
+        if (nowIdx >= t.i0 && nowIdx < t.i1) {
+          if (!containing || t.i0 > containing.i0) containing = t;
+        }
+      }
+      if (containing && insetPlanForBox(grid, containing.box, cssW)) return containing;
+    }
+    const blocks = collectHilbertBlocks(width, height, nowIdx, maxArea);
     let best = null;
-    let bestD = Infinity;
+    let bestFill = null;
     for (let i = 0; i < blocks.length; i++) {
       const b = blocks[i];
-      if (b.box.w * b.box.h !== b.area) continue;
-      if (zoomBoxAspectErr(b.box, parentAspect) > ZOOM_ASPECT_LOG_TIE) continue;
-      if (b.box.w === wantW && b.box.h === wantH) {
-        exact = b;
-        continue;
-      }
-      const d = Math.abs(Math.log(b.area / Math.max(1, wantArea)));
-      if (d < bestD) {
-        bestD = d;
-        best = b;
+      if (!insetPlanForBox(grid, b.box, cssW)) continue;
+      if (!best || b.area > best.area) best = b;
+      if (zoomBoxAspectErr(b.box, parentAspect) <= ZOOM_ASPECT_LOG_TIE) {
+        if (!bestFill || b.area > bestFill.area) bestFill = b;
       }
     }
-    return exact || best;
+    if (bestFill && best && bestFill.area >= best.area * 0.45) return bestFill;
+    return bestFill || best;
   }
 
   function estimateInsetLabelPx(zStart, zEnd, box, k, parentDur, tileW, tileH) { // typical glyph if this window were the inset
@@ -1581,7 +1648,7 @@
       this.layout = null;
       this.zoomBox = null;
       this.zoomRange = null;
-      this._zoomLock = null; // {n,w,h,k} covering-grid zoom step
+      this._zoomLock = null; // {depth,w,h,k} Gilbert-partition zoom step
       this._lastKey = "";
       this._liveLabel = null; // live unit glyph; place is refreshed every LABEL_LIVE_MS
       this._tipIdx = -1;
@@ -1688,26 +1755,26 @@
       }
     }
 
-    enumerateZoomWindows(now) { // one window per n×n zoom level, tile containing now
+    enumerateZoomWindows(now) { // one packed Gilbert leaf per zoom depth, the cell that contains now
       if (!this.layout) return [];
       const { grid } = this.layout;
       const cssW = this.tileW || this.cssW;
       this._zoomAspect = grid.w / grid.h;
-      const levels = zoomLevelNs(grid, cssW);
+      const levels = hilbertZoomLevels(grid, cssW);
       const out = [];
       for (let t = 0; t < levels.length; t++) {
         const L = levels[t];
-        const win = (now != null) ? this.placeZoomWindow(now, L.n, L.k) : null;
+        const win = (now != null) ? this.placeZoomWindow(now, L.depth, L.maxArea, L.w, L.h, 0) : null;
         out.push(win || {
           i0: 0, i1: L.area, start: this.start, end: this.end,
-          box: { x: 0, y: 0, w: L.w, h: L.h }, k: L.k, n: L.n,
+          box: { x: 0, y: 0, w: L.w, h: L.h }, k: L.k, depth: L.depth,
           area: L.area, D: L.D, px: 0, err: 0, flip: false
         });
       }
       return out;
     }
 
-    winFromBox(box, k, n) { // yellow box → inset window; packed range when the crop is a contiguous curve slice
+    winFromBox(box, k, depth) { // yellow box → inset window; packed range when the crop is a contiguous curve slice
       const { grid, g, cellStart } = this.layout;
       const at = g.at;
       const idx = [];
@@ -1734,7 +1801,7 @@
         i0, i1,
         start: cellStart[i0],
         end: cellStart[idx[idx.length - 1]] + grid.cellDur,
-        box, k: kUse, n: n || (this._zoomLock && this._zoomLock.n) || 0,
+        box, k: kUse, depth: depth || (this._zoomLock && this._zoomLock.depth) || 0,
         area: box.w * box.h,
         D: plan ? plan.D : grid.cellDur / (kUse * kUse),
         px: 0, err: 0, flip: false
@@ -1743,48 +1810,57 @@
       return win;
     }
 
-    placeZoomWindow(now, n, k) { // the unique covering tile of the n×n grid that contains now
-      if (!this.layout || !(n >= 2)) return null;
-      const { grid, g } = this.layout;
+    placeZoomWindow(now, depth, maxArea, wantW, wantH, k) { // packed same-size Hilbert tile, else the largest whole cell in this budget
+      if (!this.layout || !(depth >= 1) || !(maxArea >= ZOOM_MIN_AREA)) return null;
+      const { grid } = this.layout;
       if (now < this.start || now >= this.end) return null;
       const nowIdx = clamp(Math.floor((now - this.start) / grid.cellDur), 0, grid.cells - 1);
-      const box = zoomTileAtCell(grid.w, grid.h, n, g.xs[nowIdx], g.ys[nowIdx]);
-      if (box.w < 1 || box.h < 1) return null;
+      const parentAspect = grid.w / Math.max(1, grid.h);
+      const cssW = this.tileW || this.cssW;
+      const block = pickPackedZoomBlock(grid.w, grid.h, nowIdx, maxArea, grid, cssW, parentAspect, wantW, wantH);
+      if (!block || block.box.w < 1 || block.box.h < 1) return null;
       const lock = this._zoomLock;
-      return this.winFromBox(box, k >= 1 ? k : (lock && lock.k), n);
+      const same = lock && lock.depth === depth && lock.w === block.box.w && lock.h === block.box.h;
+      const kUse = (same && lock.k >= 1) ? lock.k : (k >= 1 ? k : 0);
+      const win = this.winFromBox(block.box, kUse, depth);
+      if (win) {
+        win.maxArea = maxArea;
+        win.wantW = wantW;
+        win.wantH = wantH;
+      }
+      return win;
     }
 
     pickZoomWindow(now) {
-      // n×n covering grid; stored area picks the zoom level (side ×2 steps).
+      // packed Gilbert budget; stored area picks the zoom level from partition cell sizes.
       if (!this.layout) return null;
       const { grid } = this.layout;
       const cssW = this.tileW || this.cssW;
       this._zoomAspect = grid.w / grid.h;
-      const levels = zoomLevelNs(grid, cssW);
+      const levels = hilbertZoomLevels(grid, cssW);
       if (!levels.length) return null;
       const L = pickZoomLevel(levels, currentZoomArea());
       if (!L) return null;
-      return this.placeZoomWindow(now, L.n, L.k);
+      return this.placeZoomWindow(now, L.depth, L.maxArea, L.w, L.h, 0);
     }
 
-    remapZoomRange() { // new parent grid: keep zoom n, snap to the covering tile at now
+    remapZoomRange() { // new parent grid: keep zoom depth, snap to the packed cell at now
       if (!this.layout) return null;
       const lock = this._zoomLock;
       const { grid } = this.layout;
       const cssW = this.tileW || this.cssW;
-      const levels = zoomLevelNs(grid, cssW);
+      const levels = hilbertZoomLevels(grid, cssW);
       let L = pickZoomLevel(levels, currentZoomArea());
-      if (lock && lock.n >= 2) {
+      if (lock && lock.depth >= 1) {
         for (let i = 0; i < levels.length; i++) {
-          if (levels[i].n === lock.n) { L = levels[i]; break; }
+          if (levels[i].depth === lock.depth) { L = levels[i]; break; }
         }
       }
       if (!L) return null;
-      const k = (lock && lock.k >= 1 && lock.n === L.n) ? lock.k : L.k;
-      return this.placeZoomWindow(nowMs(), L.n, k);
+      return this.placeZoomWindow(nowMs(), L.depth, L.maxArea, L.w, L.h, 0);
     }
 
-    zoomContainsNow(now) { // true while now's parent cell still sits in this covering tile
+    zoomContainsNow(now) { // true while now's parent cell still sits in this packed cell
       if (!this.zoomBox || !this.layout) return false;
       const { grid, g } = this.layout;
       if (now < this.start || now >= this.end) return false;
@@ -1792,16 +1868,16 @@
       return boxContainsCell(this.zoomBox, g, nowIdx);
     }
 
-    slideZoomWindow(now) { // same n×n grid: next covering tile along the curve (the one now sits in)
+    slideZoomWindow(now) { // same zoom family: next packed cell along the curve (the one now sits in)
       const lock = this._zoomLock;
-      if (!lock || !this.layout || !(lock.n >= 2)) return null;
-      return this.placeZoomWindow(now, lock.n, lock.k);
+      if (!lock || !this.layout || !(lock.depth >= 1) || !(lock.maxArea >= ZOOM_MIN_AREA)) return null;
+      return this.placeZoomWindow(now, lock.depth, lock.maxArea, lock.wantW, lock.wantH, 0);
     }
 
     lockedZoomWin() { // reconstruct the current locked window while now is still inside it
       const lock = this._zoomLock;
       if (!lock || !this.zoomBox || !this.layout) return null;
-      return this.winFromBox(this.zoomBox, lock.k, lock.n);
+      return this.winFromBox(this.zoomBox, lock.k, lock.depth);
     }
 
     _layoutCanvases() { // size four layers; hl is padded for the outside yellow frame
@@ -2869,13 +2945,13 @@
     if (!win && !force && main._zoomLock) win = main.slideZoomWindow(now);
     if (!win) {
       win = main.pickZoomWindow(now);
-      if (!force && win && main._zoomLock && win.n !== main._zoomLock.n) {
+      if (!force && win && main._zoomLock && win.depth !== main._zoomLock.depth) {
         win = main.slideZoomWindow(now) || win;
       }
     }
     if (!win && main._zoomLock && main.zoomContainsNow(now)) win = main.lockedZoomWin();
     if (win) {
-      main._zoomLock = { n: win.n, w: win.box.w, h: win.box.h, k: win.k, cssW: main.cssW };
+      main._zoomLock = { depth: win.depth, maxArea: win.maxArea || win.area, wantW: win.wantW, wantH: win.wantH, w: win.box.w, h: win.box.h, k: win.k, cssW: main.cssW };
       main._zoomMinute = minute;
     }
     if (!win) {
@@ -2887,7 +2963,7 @@
       return;
     }
     const cssW = Math.max(TILE_MIN, Math.round(insetCssWidth || main.cssW));
-    const layoutKey = (win.n || 0) + ":" + win.box.x + "," + win.box.y + ":" + win.box.w + "x" + win.box.h + "k" + win.k + "@" + cssW;
+    const layoutKey = (win.depth || 0) + ":" + win.box.x + "," + win.box.y + ":" + win.box.w + "x" + win.box.h + "k" + win.k + "@" + cssW;
     main.setZoomHighlight(win.box, { start: win.start, end: win.end });
     const inset = ensureSlot(1).map;
     main._zoomAspect = main.layout.grid.w / main.layout.grid.h;
@@ -2914,12 +2990,12 @@
     return win.start + "-" + win.end + ":" + win.box.w + "x" + win.box.h;
   }
 
-  function listZoomLadder(now) { // n×n levels, small tiles→large; idx is the current covering tile
+  function listZoomLadder(now) { // Gilbert depths, small tiles→large; idx is the current packed cell's depth
     const main = slots[0] && slots[0].map;
     if (!main || !main.layout) return { uniq: [], idx: -1 };
     const { grid } = main.layout;
     const cssW = main.tileW || main.cssW;
-    const levels = zoomLevelNs(grid, cssW);
+    const levels = hilbertZoomLevels(grid, cssW);
     const uniq = [];
     for (let t = 0; t < levels.length; t++) {
       const L = levels[t];
@@ -2927,22 +3003,22 @@
         box: { x: 0, y: 0, w: L.w, h: L.h },
         area: L.area,
         k: L.k,
-        n: L.n,
+        depth: L.depth,
         start: 0,
         end: 0
       });
     }
     uniq.sort((a, b) => a.area - b.area);
     let idx = -1;
-    if (main._zoomLock && main._zoomLock.n >= 2) {
+    if (main._zoomLock && main._zoomLock.depth >= 1) {
       for (let i = 0; i < uniq.length; i++) {
-        if (uniq[i].n === main._zoomLock.n) { idx = i; break; }
+        if (uniq[i].depth === main._zoomLock.depth) { idx = i; break; }
       }
     }
     if (idx < 0 && main.zoomBox) {
       const area = main.zoomBox.w * main.zoomBox.h;
       for (let i = 0; i < uniq.length; i++) {
-        if (Math.abs(uniq[i].area - area) <= uniq[i].n) { idx = i; break; }
+        if (Math.abs(uniq[i].area - area) / Math.max(1, uniq[i].area) < 0.2) { idx = i; break; }
       }
       if (idx < 0) {
         for (let i = 0; i < uniq.length; i++) {
