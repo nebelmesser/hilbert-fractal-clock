@@ -22,7 +22,6 @@
       --bg: #000; /* page + surplus-behind-the-map */
       --fg: #e8e8e8; /* body text, button labels */
       --muted: #8a8a8a; /* captions under the maps */
-      --btn: #161616; /* D/M/Y/Unix/Custom idle fill */
       --btn-border: #2a2a2a; /* idle button + date-input stroke */
       --btn-active: #2a3a48; /* pressed preset fill */
       --btn-active-border: #c86a6a; /* pressed preset stroke */
@@ -155,7 +154,7 @@
     }
     .controls button {
       appearance: none;
-      background: var(--btn);
+      background: var(--future);
       color: var(--fg);
       border: 1px solid var(--btn-border);
       padding: 8px 12px;
@@ -164,7 +163,7 @@
       cursor: pointer;
     }
     .controls button[aria-pressed="true"] {
-      background: var(--btn-active);
+      background: var(--cur-future);
       border-color: var(--btn-active-border);
       color: var(--accent);
     }
@@ -185,9 +184,7 @@
       align-items: center;
       justify-content: center;
     }
-    .controls .zoom-btns button:disabled {
-      opacity: 1; /* fade the square, not the whole chrome */
-    }
+
     .controls .zoom-btns .zoom-icon {
       box-sizing: border-box;
       border: var(--zoom-frame-w) solid var(--zoom);
@@ -710,6 +707,8 @@
   const ZOOM_BOX_MIN_PX = 8; // min yellow-box side on the parent canvas (CSS px). Not the inset tile.
   const HILBERT_ZOOM_MAX_DEPTH = 12; // Gilbert children at this depth are already tiny
   const ZOOM_DEPTH_AREA_RATIO = 1.15; // skip a depth whose largest leaf is this close to the last kept size
+  const ZOOM_STEP_MIN_SHRINK = 2.5; // +/−: skip a half-split of now's leaf; keep ~4-way / quartering
+  const ZOOM_MIN_FILL_MS = 3 * MS_MIN; // finest yellow box must take at least this long to fill
 
   function walkHilbertPartitions(width, height, visit, nowIdx, stopArea) { // Gilbert split; optional nowIdx prune; stopArea skips children
     function walk(x, y, ax, ay, bx, by, iStart) {
@@ -1324,18 +1323,17 @@
     for (let d = 1; d <= HILBERT_ZOOM_MAX_DEPTH; d++) {
       const info = hilbertDepthInfo(grid.w, grid.h, d);
       if (!info.maxBox || info.maxArea < ZOOM_MIN_AREA) break;
-      if (info.minArea < ZOOM_MIN_AREA) break;
       const w = info.commonW, h = info.commonH;
       if (!(w >= 1 && h >= 1)) continue;
       const area = info.commonArea || (w * h);
-      if (area < ZOOM_MIN_AREA) continue;
+      // Common sibling may be a thin 3-way sliver; now's leaf is checked in pickHilbertLeaf.
       if (area > grid.w * grid.h * ZOOM_PARENT_SHARE) continue; // half-map crop does not add detail (day 12h at hour labels)
-      if (!zoomBoxCssOk(grid, { w: w, h: h }, cssW)) break;
+      if (!zoomBoxCssOk(grid, info.maxBox, cssW)) break; // even the fattest leaf at this depth is an invisible yellow box
       const plan = insetPlanForBox(grid, info.maxBox, cssW);
       if (!plan) continue;
       const zEnd = Math.min(t1, t0 + area * grid.cellDur);
       if (!zoomRefinesLabels(t0, t1, grid.cellDur, t0, zEnd, plan.D)) continue;
-      if (out.length && area > out[out.length - 1].area / ZOOM_DEPTH_AREA_RATIO) continue;
+      if (out.length && info.maxArea > out[out.length - 1].maxArea / ZOOM_DEPTH_AREA_RATIO) continue;
       out.push({
         depth: d,
         w: w,
@@ -1358,8 +1356,9 @@
     if (storedArea > 0 && storedArea < 1e14) {
       let bestD = Infinity;
       for (let i = 0; i < levels.length; i++) {
-        const d = Math.abs(levels[i].area - storedArea);
-        if (d < bestD || (d === bestD && levels[i].area > best.area)) {
+        const a = levels[i].nowArea > 0 ? levels[i].nowArea : levels[i].area;
+        const d = Math.abs(a - storedArea);
+        if (d < bestD || (d === bestD && a > (best.nowArea > 0 ? best.nowArea : best.area))) {
           bestD = d;
           best = levels[i];
         }
@@ -1373,6 +1372,7 @@
     if (!leaf || leaf.area < ZOOM_MIN_AREA) return null;
     if (leaf.box.w * leaf.box.h !== leaf.area) return null;
     if (leaf.area > width * height * ZOOM_PARENT_SHARE) return null; // now in a fat 3-way band — fall back to a finer sibling depth
+    if (!zoomBoxCssOk(grid, leaf.box, cssW)) return null; // this leaf's yellow box would be smaller than ZOOM_BOX_MIN_PX
     const plan = insetPlanForBox(grid, leaf.box, cssW);
     if (!plan) return null;
     const t0 = Number.isFinite(rangeStart) ? rangeStart : 0;
@@ -1381,9 +1381,35 @@
       : t0 + grid.cellDur * Math.max(1, grid.cells);
     const zStart = t0 + leaf.i0 * grid.cellDur;
     const zEnd = Math.min(t1, zStart + leaf.area * grid.cellDur);
+    if (zEnd - zStart < ZOOM_MIN_FILL_MS) return null; // whole square would fill in under 3 minutes
     if (!zoomRefinesLabels(t0, t1, grid.cellDur, zStart, zEnd, plan.D)) return null;
     leaf.depth = depth;
     return leaf;
+  }
+
+  function zoomLadderLevels(grid, cssW, rangeStart, rangeEnd, nowIdx) { // +/− stops; skip a depth that only halves now's leaf
+    const levels = hilbertZoomLevels(grid, cssW, rangeStart, rangeEnd);
+    const out = [];
+    for (let t = 0; t < levels.length; t++) {
+      const L = levels[t];
+      const leaf = pickHilbertLeaf(grid.w, grid.h, nowIdx, L.depth, grid, cssW, rangeStart, rangeEnd);
+      if (!leaf) continue;
+      if (out.length && leaf.area * ZOOM_STEP_MIN_SHRINK > out[out.length - 1].nowArea) continue;
+      out.push({
+        depth: L.depth,
+        w: L.w,
+        h: L.h,
+        area: L.area,
+        maxArea: L.maxArea,
+        k: L.k,
+        D: L.D,
+        mixed: L.mixed,
+        nowArea: leaf.area,
+        nowW: leaf.box.w,
+        nowH: leaf.box.h
+      });
+    }
+    return out;
   }
 
   function gilbertLeavesAt(width, height, nowIdx) { // packed leaf at each depth that contains now
@@ -1411,11 +1437,13 @@
     for (let i = 0; i < leaves.length; i++) {
       const leaf = leaves[i];
       if (!loose && leaf.area > width * height * ZOOM_PARENT_SHARE) continue;
+      if (!zoomBoxCssOk(grid, leaf.box, cssW)) continue;
       const plan = insetPlanForBox(grid, leaf.box, cssW);
       if (!plan) continue;
+      const zStart = t0 + leaf.i0 * grid.cellDur;
+      const zEnd = Math.min(t1, zStart + leaf.area * grid.cellDur);
+      if (zEnd - zStart < ZOOM_MIN_FILL_MS) continue;
       if (!loose) {
-        const zStart = t0 + leaf.i0 * grid.cellDur;
-        const zEnd = Math.min(t1, zStart + leaf.area * grid.cellDur);
         if (!zoomRefinesLabels(t0, t1, grid.cellDur, zStart, zEnd, plan.D)) continue;
       }
       const a = leaf.area;
@@ -1863,19 +1891,19 @@
       return win;
     }
 
-    placeZoomWindow(now, depth, maxArea, wantW, wantH, k) { // packed leaf containing now; keep locked area when sliding
+    placeZoomWindow(now, depth, maxArea, wantW, wantH, k) { // packed leaf containing now; keep locked duration when sliding / reload
       if (!this.layout || !(depth >= 1)) return null;
       const { grid } = this.layout;
       if (now < this.start || now >= this.end) return null;
       const nowIdx = clamp(Math.floor((now - this.start) / grid.cellDur), 0, grid.cells - 1);
       const cssW = this.tileW || this.cssW;
       const lock = this._zoomLock;
-      const keepArea = lock && lock.maxArea >= ZOOM_MIN_AREA;
+      const wantArea = zoomWantArea(grid);
       let block = null;
-      if (keepArea) {
+      if (wantArea >= ZOOM_MIN_AREA) {
         block = pickLeafNearArea(
           gilbertLeavesAt(grid.w, grid.h, nowIdx),
-          lock.maxArea, grid.w, grid.h, grid, cssW, this.start, this.end, true
+          wantArea, grid.w, grid.h, grid, cssW, this.start, this.end, true
         );
       }
       if (!block) block = pickHilbertLeaf(grid.w, grid.h, nowIdx, depth, grid, cssW, this.start, this.end);
@@ -1885,9 +1913,13 @@
       const kUse = (same && lock.k >= 1) ? lock.k : (k >= 1 ? k : 0);
       const win = this.winFromBox(block.box, kUse, placeDepth);
       if (win) {
-        win.ladderDepth = keepArea ? lock.depth : placeDepth;
-        win.wantArea = keepArea ? lock.maxArea : block.area;
+        const keep = wantArea >= ZOOM_MIN_AREA;
+        win.ladderDepth = (keep && lock && lock.depth >= 1) ? lock.depth : placeDepth;
+        win.wantArea = keep ? wantArea : block.area;
         win.maxArea = win.wantArea;
+        win.wantMs = (lock && lock.wantMs > 0) ? lock.wantMs
+          : (keep && currentZoomMs() > 0 && currentZoomMs() < 1e14) ? currentZoomMs()
+          : block.area * grid.cellDur;
         win.wantW = block.box.w;
         win.wantH = block.box.h;
       }
@@ -1900,7 +1932,9 @@
       const { grid } = this.layout;
       const cssW = this.tileW || this.cssW;
       this._zoomAspect = grid.w / grid.h;
-      const levels = hilbertZoomLevels(grid, cssW, this.start, this.end);
+      if (now < this.start || now >= this.end) return null;
+      const nowIdx = clamp(Math.floor((now - this.start) / grid.cellDur), 0, grid.cells - 1);
+      const levels = zoomLadderLevels(grid, cssW, this.start, this.end, nowIdx);
       if (!levels.length) return null;
       const L = pickZoomLevel(levels, currentZoomArea());
       const tried = {};
@@ -2495,12 +2529,55 @@
   let lastNavStamp = ""; // day+month+year of the preset labels — retitle 30th / August / 2026 at midnight
   let chromeHidden = false; // F toggles the top bar; never written to localStorage
   let zoomSizeByMode = { today: 0, month: 0, year: 0, epoch: 0, arbitrary: 0 }; // parent-cell area per preset; 0 = automatic
+  let zoomMsByMode = { today: 0, month: 0, year: 0, epoch: 0, arbitrary: 0 }; // inset window duration (ms) — stable across grids
+  let zoomFollowStored = true; // false for one +/− step so we pick by depth, then persist
   let zoomInBtn = null;
   let zoomOutBtn = null;
   const FRAME_KEY = "clock-hilbert-frame"; // localStorage: last preset + Custom dates + zoom per mode
+  const ZOOM_IDS = ["today", "month", "year", "epoch", "arbitrary"];
 
   function currentZoomArea() { // stored yellow-box area for the active preset
     return zoomSizeByMode[mode] || 0;
+  }
+
+  function currentZoomMs() { // locked inset duration; survives reload and Fit grid changes
+    return zoomMsByMode[mode] || 0;
+  }
+
+  function zoomWantArea(grid) { // cells on this grid that match the locked window duration
+    const lock = slots[0] && slots[0].map && slots[0].map._zoomLock;
+    const dur = lock && lock.wantMs > 0 ? lock.wantMs : (zoomFollowStored ? currentZoomMs() : 0);
+    if (dur > 0 && dur < 1e14 && grid && grid.cellDur > 0) return dur / grid.cellDur;
+    if (!zoomFollowStored) return 0;
+    const area = currentZoomArea();
+    if (area >= ZOOM_MIN_AREA && area < 1e14) return area; // older saves stored cells only
+    return 0;
+  }
+
+  function persistZoomLevel(grid, wantArea, wantMs) { // write the locked duration so reload does not jump a mixed sibling
+    if (!(wantMs > 0) || wantMs >= 1e14) return;
+    const area = wantArea >= ZOOM_MIN_AREA ? wantArea : Math.round(wantMs / Math.max(1, grid && grid.cellDur || 1));
+    zoomFollowStored = true;
+    if (zoomSizeByMode[mode] === area && zoomMsByMode[mode] === wantMs) return;
+    zoomSizeByMode[mode] = area;
+    zoomMsByMode[mode] = wantMs;
+    saveFrame();
+  }
+
+  function clearZoomLevel() { // day − past coarsest, or a fresh +/− step
+    zoomSizeByMode[mode] = 0;
+    zoomMsByMode[mode] = 0;
+  }
+
+  function forgetZoomOnResize() { // stored duration is for the old grid — do not keep it after a real window resize
+    zoomFollowStored = false;
+    for (let i = 0; i < ZOOM_IDS.length; i++) {
+      zoomSizeByMode[ZOOM_IDS[i]] = 0;
+      zoomMsByMode[ZOOM_IDS[i]] = 0;
+    }
+    const main = slots[0] && slots[0].map;
+    if (main) main._zoomLock = null;
+    saveFrame();
   }
 
   function applyLayoutClass() { // Fit is the only layout; class drives the CSS lock
@@ -2508,14 +2585,22 @@
     document.body.classList.add("fit-mode");
   }
 
-  function saveFrame() { // last preset + Custom dates + zoom area per mode
+  function saveFrame() { // last preset + Custom dates + zoom area/duration per mode
     try {
-      const data = { mode: mode, layout: "fit", zoom: zoomSizeByMode };
+      const data = { mode: mode, layout: "fit", zoom: zoomSizeByMode, zoomMs: zoomMsByMode };
       if (arbitrary && Number.isFinite(arbitrary.start) && Number.isFinite(arbitrary.end) && arbitrary.end > arbitrary.start) {
         data.arbitrary = { start: arbitrary.start, end: arbitrary.end };
       }
       localStorage.setItem(FRAME_KEY, JSON.stringify(data));
     } catch (err) {}
+  }
+
+  function loadZoomMap(raw, dest) { // copy finite ≥0 numbers onto dest
+    if (!raw || typeof raw !== "object") return;
+    for (let i = 0; i < ZOOM_IDS.length; i++) {
+      const n = +raw[ZOOM_IDS[i]];
+      if (Number.isFinite(n) && n >= 0) dest[ZOOM_IDS[i]] = n;
+    }
   }
 
   function loadFrame() { // restore last preset / Custom dates from localStorage
@@ -2528,13 +2613,8 @@
       if (data.mode === "today" || data.mode === "month" || data.mode === "year" || data.mode === "epoch" || data.mode === "arbitrary") {
         if (data.mode !== "arbitrary" || arbitrary) mode = data.mode;
       }
-      if (data.zoom && typeof data.zoom === "object") {
-        const ids = ["today", "month", "year", "epoch", "arbitrary"];
-        for (let i = 0; i < ids.length; i++) {
-          const n = +data.zoom[ids[i]];
-          if (Number.isFinite(n) && n >= 0) zoomSizeByMode[ids[i]] = n;
-        }
-      }
+      loadZoomMap(data.zoom, zoomSizeByMode);
+      loadZoomMap(data.zoomMs, zoomMsByMode);
     } catch (err) {}
   }
 
@@ -2586,12 +2666,12 @@
     zoomWrap.className = "zoom-btns";
     zoomInBtn = document.createElement("button");
     zoomInBtn.type = "button";
-    zoomInBtn.innerHTML = '<span class="zoom-icon zoom-icon-sm" aria-hidden="true"></span>';
+    zoomInBtn.innerHTML = '&plus;';
     zoomInBtn.setAttribute("aria-label", "Zoom in");
     zoomInBtn.addEventListener("click", () => nudgeZoomSize(-1));
     zoomOutBtn = document.createElement("button");
     zoomOutBtn.type = "button";
-    zoomOutBtn.innerHTML = '<span class="zoom-icon zoom-icon-lg" aria-hidden="true"></span>';
+    zoomOutBtn.innerHTML = '&minus;';
     zoomOutBtn.setAttribute("aria-label", "Zoom out");
     zoomOutBtn.addEventListener("click", () => nudgeZoomSize(1));
     zoomWrap.appendChild(zoomInBtn);
@@ -2998,15 +3078,21 @@
     return true;
   }
 
-  function scheduleRelayout() { // ignore sub-RESIZE_EPS jitter (mobile chrome hide)
+  let pendingResetZoom = false; // window/orientation resize: drop stored zoom after debounce
+
+  function scheduleRelayout(resetZoom) { // ignore sub-RESIZE_EPS jitter (mobile chrome hide)
+    if (resetZoom) pendingResetZoom = true;
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       const w = stageWidth();
       const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
       if (Math.abs(w - lastLayoutWidth) < RESIZE_EPS && Math.abs(h - lastLayoutHeight) < RESIZE_EPS) {
+        pendingResetZoom = false;
         requestAnimationFrame(drawAllConnectors);
         return;
       }
+      if (pendingResetZoom) forgetZoomOnResize();
+      pendingResetZoom = false;
       relayout();
     }, RESIZE_DEBOUNCE_MS);
   }
@@ -3036,12 +3122,15 @@
     }
     if (!win && main._zoomLock && main.zoomContainsNow(now)) win = main.lockedZoomWin();
     if (win) {
+      const wantMs = win.wantMs > 0 ? win.wantMs : (win.wantArea || win.area) * main.layout.grid.cellDur;
       main._zoomLock = {
         depth: win.ladderDepth || win.depth,
         maxArea: win.wantArea || win.maxArea || win.area,
+        wantMs: wantMs,
         wantW: win.wantW, wantH: win.wantH, w: win.box.w, h: win.box.h, k: win.k, cssW: main.cssW
       };
       main._zoomMinute = minute;
+      persistZoomLevel(main.layout.grid, main._zoomLock.maxArea, wantMs);
     }
     if (!win) {
       main.setZoomHighlight(null);
@@ -3084,19 +3173,18 @@
     if (!main || !main.layout) return { uniq: [], idx: -1 };
     const { grid } = main.layout;
     const cssW = main.tileW || main.cssW;
-    const levels = hilbertZoomLevels(grid, cssW, main.start, main.end);
     const nowIdx = (now >= main.start && now < main.end)
       ? clamp(Math.floor((now - main.start) / grid.cellDur), 0, grid.cells - 1)
       : 0;
+    const levels = zoomLadderLevels(grid, cssW, main.start, main.end, nowIdx);
     const uniq = [];
     for (let t = 0; t < levels.length; t++) {
       const L = levels[t];
-      if (!pickHilbertLeaf(grid.w, grid.h, nowIdx, L.depth, grid, cssW, main.start, main.end)) continue;
       uniq.push({
-        box: { x: 0, y: 0, w: L.w, h: L.h },
-        w: L.w,
-        h: L.h,
-        area: L.area,
+        box: { x: 0, y: 0, w: L.nowW, h: L.nowH },
+        w: L.nowW,
+        h: L.nowH,
+        area: L.nowArea,
         k: L.k,
         depth: L.depth,
         start: 0,
@@ -3108,7 +3196,13 @@
     let idx = -1;
     if (lock && lock.depth >= 1) {
       for (let i = 0; i < uniq.length; i++) {
-        if (uniq[i].depth === lock.depth) { idx = i; break; }
+        if (uniq[i].depth !== lock.depth) continue;
+        if (lock.maxArea >= ZOOM_MIN_AREA) {
+          const a = uniq[i].area;
+          if (a < lock.maxArea * ZOOM_KEEP_AREA_LO || a > lock.maxArea * ZOOM_KEEP_AREA_HI) continue;
+        }
+        idx = i;
+        break;
       }
     }
     if (idx < 0 && lock && lock.wantW >= 1 && lock.wantH >= 1) {
@@ -3163,7 +3257,7 @@
   }
 
   function hideFineInset() { // parent ≤1s: − past the coarsest window drops the second panel
-    zoomSizeByMode[mode] = 0;
+    clearZoomLevel();
     saveFrame();
     const main = slots[0] && slots[0].map;
     if (main) main.setZoomHighlight(null);
@@ -3181,7 +3275,9 @@
     const on = !!(main.zoomRange && insetSlotOn());
     if (dismiss && !on) {
       if (dir >= 0 || !lad.uniq.length) return;
+      zoomFollowStored = false;
       zoomSizeByMode[mode] = 1e15; // coarsest after relayout — clamp to sliceCap on the new grid
+      zoomMsByMode[mode] = 0;
       saveFrame();
       relayout();
       return;
@@ -3210,7 +3306,9 @@
     }
     if (next < 0 || next >= lad.uniq.length) return;
     const win = lad.uniq[next];
+    zoomFollowStored = false;
     zoomSizeByMode[mode] = win.area;
+    zoomMsByMode[mode] = 0;
     saveFrame();
     main._zoomLock = null; // new zoom level — size may change; placeZoomWindow re-locks
     main._zoomMinute = Math.floor(now / MS_MIN);
@@ -3335,20 +3433,25 @@
     setMode(modes[k]);
   });
 
-  window.addEventListener("resize", scheduleRelayout);
-  if (window.visualViewport) window.visualViewport.addEventListener("resize", scheduleRelayout);
+  window.addEventListener("resize", () => scheduleRelayout(true));
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", () => scheduleRelayout(true));
   if (typeof window.matchMedia === "function") {
     const orientMq = window.matchMedia("(orientation: portrait)");
-    const onOrient = () => { lastLayoutWidth = 0; scheduleRelayout(); };
+    const onOrient = () => { lastLayoutWidth = 0; scheduleRelayout(true); };
     if (orientMq.addEventListener) orientMq.addEventListener("change", onOrient);
     else if (orientMq.addListener) orientMq.addListener(onOrient);
   }
   window.addEventListener("orientationchange", () => {
     lastLayoutWidth = 0;
-    setTimeout(relayout, ORIENT_RELAYOUT_MS);
+    pendingResetZoom = true;
+    setTimeout(() => {
+      if (pendingResetZoom) forgetZoomOnResize();
+      pendingResetZoom = false;
+      relayout();
+    }, ORIENT_RELAYOUT_MS);
   });
   if (typeof ResizeObserver !== "undefined") {
-    new ResizeObserver(scheduleRelayout).observe(stage);
+    new ResizeObserver(() => scheduleRelayout()).observe(stage); // stage box only — do not drop stored zoom
   }
 
   function loop() { // tick every cell; realign to cellDur so the head cell steps cleanly
