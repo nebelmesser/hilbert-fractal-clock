@@ -5,11 +5,11 @@
   unique partition at that depth that contains now). +/− steps those depths.
   Coarsest size keeps inset D ≤1s. When a leaf fills, the next sibling starts
   empty — tiles do not overlap. Square 2ⁿ grids split into four quadrants.
-  Yellow frame sits outside the zoom box. Equal Fit tiles.
+  Yellow frame sits outside the zoom box. Fit tiles share height in a row, width in a column.
   Today with one panel keeps the natural day picture — do not two-column pack it.
   Made by Nebelmesser ver. 1.0 @ 2026-08-30. MIT License.
   https://github.com/nebelmesser/playground
-  https://nebelmesser.art/
+  https://nebelmesser.com/
 -->
 <html lang="en" class="fit-mode">
 <head>
@@ -105,7 +105,7 @@
       overflow-wrap: anywhere;
     }
     body.fit-mode .map-block { margin: 0; }
-    /* Fit tiles: column or row, equal slots, caption under the map. */
+    /* Fit tiles: caption under the map. Row shares height; column shares width. */
     #map-stack.fit-col {
       display: flex;
       flex-direction: column;
@@ -116,11 +116,11 @@
       box-sizing: border-box;
     }
     #map-stack.fit-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr; /* each map owns half the stage */
-      column-gap: var(--stack-row-gap, 12px); /* >= stage pad + frame; JS sets --stack-row-gap */
+      display: flex;
+      flex-direction: row;
       align-items: center;
-      justify-items: center;
+      justify-content: center;
+      column-gap: var(--stack-row-gap, 12px); /* >= stage pad + frame; JS sets --stack-row-gap */
       width: 100%;
       height: 100%;
       max-width: 100%;
@@ -2853,7 +2853,7 @@
     return stageEdgeX() + STACK_ROW_FRAME;
   }
 
-  function packFit(availW, availH) { // equal tiles; row vs column = more map area
+  function packFit(availW, availH) { // row: same paint height; column: same paint width; scale to the stage
     const vis = fitSlots();
     const n = vis.length;
     if (!n) return { dir: "col", widths: [], heights: [] };
@@ -2869,27 +2869,41 @@
       return { dir: "col", widths: [w], heights: [Math.max(TILE_MIN, Math.round(w * r))] };
     }
 
-    const colW = Math.max(TILE_MIN, Math.floor(availW));
-    const colH = Math.max(TILE_MIN, Math.floor((availH - capSum - colGap) / n));
-    const rowW = Math.max(TILE_MIN, Math.floor((availW - rowGap) / n)); // half after the center gutter
-    const rowH = Math.max(TILE_MIN, Math.floor(availH - capMax));
+    const aspects = vis.map((s) => { // css width / height of each grid
+      const g = s.map.layout && s.map.layout.grid;
+      return (g && g.w > 0 && g.h > 0) ? g.w / g.h : 1;
+    });
+
+    const hBudget = Math.max(TILE_MIN, availH - capSum - colGap);
+    const colInv = aspects.reduce((s, a) => s + 1 / Math.max(1e-6, a), 0);
+    const colW = Math.max(TILE_MIN, Math.min(availW, Math.floor(hBudget / Math.max(1e-6, colInv))));
+    const colHeights = aspects.map((a) => Math.max(TILE_MIN, Math.round(colW / a)));
     const col = {
       dir: "col",
       widths: vis.map(() => colW),
-      heights: vis.map(() => colH),
-      area: n * colW * colH
+      heights: colHeights,
+      area: colHeights.reduce((s, h) => s + colW * h, 0)
     };
+
+    const wBudget = Math.max(TILE_MIN, availW - rowGap);
+    const rowSumA = aspects.reduce((s, a) => s + a, 0);
+    const rowH = Math.max(TILE_MIN, Math.min(
+      Math.floor(availH - capMax),
+      Math.floor(wBudget / Math.max(1e-6, rowSumA))
+    ));
+    const rowWidths = aspects.map((a) => Math.max(TILE_MIN, Math.round(rowH * a)));
     const row = {
       dir: "row",
-      widths: vis.map(() => rowW),
+      widths: rowWidths,
       heights: vis.map(() => rowH),
-      area: n * rowW * rowH
+      area: rowWidths.reduce((s, w) => s + w * rowH, 0)
     };
+
     if (pageIsPortrait()) return col; // upright screen: always stack, even if a row scores more area
     return row.area > col.area ? row : col;
   }
 
-  function applySlotBox(slot, tileW, tileH) { // Fit budget is tileW×tileH; row inset wrap matches the parent tile
+  function applySlotBox(slot, tileW, tileH) { // Fit budget is tileW×tileH; canvas letterboxes to the grid
     slot.map.setDisplaySize(tileW, tileH);
     slot.block.style.width = tileW + "px";
     slot.block.style.height = (tileH + captionExtra(slot)) + "px";
@@ -2902,19 +2916,22 @@
     }
   }
 
-  function applyFitPack(pack, now, rebuildGrids) { // equal tiles; optionally rebuild the parent grid
+  function applyFitPack(pack, now, rebuildGrids) { // size each tile to its grid; optionally rebuild the parent
     stackEl.classList.toggle("fit-row", pack.dir === "row");
     stackEl.classList.toggle("fit-col", pack.dir !== "row");
     const vis = fitSlots();
     stackEl.style.setProperty("--stack-row-gap", pack.dir === "row" && vis.length > 1 ? rowStackGap() + "px" : "0px");
-    const w = Math.max(TILE_MIN, Math.round(pack.widths[0]));
-    const h = Math.max(TILE_MIN, Math.round(pack.heights[0]));
     if (rebuildGrids && vis[0]) {
-      vis[0].map.rebuild(w, clamp(w / h, ASPECT_MIN, ASPECT_MAX)); // two-panel: grid matches the tile, do not force portrait
-      updateZoom(now, true, w);
+      const w0 = Math.max(TILE_MIN, Math.round(pack.widths[0]));
+      const h0 = Math.max(TILE_MIN, Math.round(pack.heights[0]));
+      vis[0].map.rebuild(w0, clamp(w0 / h0, ASPECT_MIN, ASPECT_MAX)); // two-panel: grid matches this map's tile
+      const insetW = pack.widths.length > 1 ? pack.widths[1] : w0;
+      updateZoom(now, true, insetW);
     }
     const vis2 = fitSlots();
     for (let i = 0; i < vis2.length; i++) {
+      const w = Math.max(TILE_MIN, Math.round(pack.widths[i] != null ? pack.widths[i] : pack.widths[0]));
+      const h = Math.max(TILE_MIN, Math.round(pack.heights[i] != null ? pack.heights[i] : pack.heights[0]));
       applySlotBox(vis2[i], w, h);
     }
   }
@@ -3020,7 +3037,9 @@
     const tw = vis[0].map.tileW || vis[0].map.cssW;
     const th = vis[0].map.tileH || vis[0].map.cssH;
     for (let i = 0; i < vis.length; i++) {
-      applySlotBox(vis[i], Math.max(TILE_MIN, Math.floor(tw * s)), Math.max(TILE_MIN, Math.floor(th * s)));
+      const iw = vis[i].map.tileW || vis[i].map.cssW || tw;
+      const ih = vis[i].map.tileH || vis[i].map.cssH || th;
+      applySlotBox(vis[i], Math.max(TILE_MIN, Math.floor(iw * s)), Math.max(TILE_MIN, Math.floor(ih * s)));
     }
     requestAnimationFrame(drawAllConnectors);
   }
@@ -3057,9 +3076,9 @@
       }
       shrunk = true;
       const s = FIT_SHRINK;
-      const tw = vis[0].map.tileW || vis[0].map.cssW;
-      const th = vis[0].map.tileH || vis[0].map.cssH;
       for (let i = 0; i < vis.length; i++) {
+        const tw = vis[i].map.tileW || vis[i].map.cssW;
+        const th = vis[i].map.tileH || vis[i].map.cssH;
         applySlotBox(vis[i], Math.max(TILE_MIN, Math.floor(tw * s)), Math.max(TILE_MIN, Math.floor(th * s)));
       }
     }
@@ -3145,17 +3164,20 @@
     main.setZoomHighlight(win.box, { start: win.start, end: win.end });
     const inset = ensureSlot(1).map;
     main._zoomAspect = main.layout.grid.w / main.layout.grid.h;
-    if (main.tileW > MIN_CSS_PX && main.tileH > MIN_CSS_PX) {
-      inset.tileW = main.tileW;
-      inset.tileH = main.tileH;
-    }
     if (force || inset._cropKey !== layoutKey) {
       inset.rebuildZoom(cssW, main.layout, win);
       inset._cropKey = layoutKey;
     }
     hideSlotsFrom(2);
     lastZoomKey = zoomChainKey(now);
-    if (main.tileW > MIN_CSS_PX && main.tileH > MIN_CSS_PX) {
+    const pack = packFit(availBox().w, availBox().h);
+    if (pack.widths.length >= 2) {
+      stackEl.classList.toggle("fit-row", pack.dir === "row");
+      stackEl.classList.toggle("fit-col", pack.dir !== "row");
+      stackEl.style.setProperty("--stack-row-gap", pack.dir === "row" ? rowStackGap() + "px" : "0px");
+      applySlotBox(slots[0], pack.widths[0], pack.heights[0]);
+      applySlotBox(slots[1], pack.widths[1], pack.heights[1]);
+    } else if (main.tileW > MIN_CSS_PX && main.tileH > MIN_CSS_PX) {
       applySlotBox(slots[1], main.tileW, main.tileH);
     } else {
       inset.setDisplayWidth(main.cssW);
