@@ -1,11 +1,15 @@
 <!DOCTYPE html>
 <!-- 
-  One-file Hilbert time map. Range → 2D curve. Fit-only. No weeks.
-  Colors live in :root. Inset is a k×k refinement of a parent Hilbert block,
-  4-connected, cell duration 0.1s / 0.25s / 0.5s / 1s. Yellow frame sits
-  outside the zoom box. Equal Fit tiles; maps keep their grid aspect (letterbox).
+  One-file Hilbert time map. Range → 2D curve. Fit-only.
+  Colors live in :root. Each zoom level is an n×n grid of non-overlapping
+  same-aspect insets that cover the parent; +/− doubles n (halves the tile side).
+  Coarsest n is the largest tile with inset cell ≤1s. Current tile contains now;
+  when it fills, follow the curve to the next unfilled tile.
+  Yellow frame sits outside the zoom box. Equal Fit tiles; both maps fill the tile.
   Today with one panel keeps the natural day picture — do not two-column pack it.
-  Made by Nebelmesser.art ver 1.0 @ 2026-08-30. MIT License.
+  Made by Nebelmesser ver. 1.0 @ 2026-08-30. MIT License.
+  https://github.com/nebelmesser/playground
+  https://nebelmesser.art/
 -->
 <html lang="en" class="fit-mode">
 <head>
@@ -32,8 +36,8 @@
       --surplus: #000000; /* leftover cells past the range */
       --label: #6c6c6c; /* labels on filled (past) regions */
       --label-empty: #5e5e5e; /* labels on empty (future) regions */
-      --label-live: #7a7268; /* live-unit label on the filled half */
-      --label-live-empty: #7a6c5c; /* live-unit label on the empty half */
+      --label-live: #c20000; /* live-unit label on the filled half */
+      --label-live-empty: #ff0000; /* live-unit label on the empty half */
       --current-outline: rgba(255, 107, 107, 0.5); /* stroke around the live unit */
       --zoom: rgba(255, 196, 72, 0.95); /* yellow box + inset frame */
       --connector: rgba(240, 180, 41, 0.7); /* diagonals: parent box → inset */
@@ -113,6 +117,7 @@
     #map-stack.fit-row {
       display: grid;
       grid-template-columns: 1fr 1fr; /* each map owns half the stage */
+      column-gap: var(--stack-row-gap, 12px); /* >= stage pad + frame; JS sets --stack-row-gap */
       align-items: center;
       justify-items: center;
       width: 100%;
@@ -161,6 +166,21 @@
       border-color: var(--btn-active-border);
       color: var(--accent);
     }
+    .controls button:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+    .controls .zoom-btns {
+      display: flex;
+      gap: 6px;
+      margin-left: 14px; /* air after Range */
+    }
+    .controls .zoom-btns button {
+      min-width: 36px;
+      padding-left: 10px;
+      padding-right: 10px;
+      /* border: 1px solid var(--zoom); */
+    }
     .arbitrary {
       display: none;
       flex-wrap: nowrap;
@@ -189,9 +209,11 @@
       position: relative;
       margin: 0 auto;
       overflow: visible;
+      background: var(--bg);
     }
     .map.map-zoom {
-      box-shadow: 0 0 0 2px var(--zoom); /* INSET_FRAME_OUT — connectors meet this outer edge */
+      outline: 2px solid var(--zoom); /* ZOOM_FRAME_W — yellow frame */
+      outline-offset: 1px; /* ZOOM_FRAME_OUTSET — sit outside the Hilbert pixels, not on them */
     }
     .map canvas {
       display: block;
@@ -238,9 +260,9 @@
   </div>
   <script>
 // One-file Hilbert time map. Range → 2D curve. Fit-only. No weeks.
-// Colors live in :root. Inset is a k×k refinement of a parent Hilbert block,
-// 4-connected, cell duration 0.1s / 0.25s / 0.5s / 1s. Yellow frame sits
-// outside the zoom box. Equal Fit tiles; maps keep their grid aspect (letterbox).
+// Colors live in :root. Each zoom level tiles the parent with a fixed n×n grid
+// of same-aspect insets; +/− halves the tile side. Inset D is any value ≤1s.
+// Yellow frame sits outside the zoom box. Equal Fit tiles; both maps fill the tile.
 // Today with one panel keeps the natural day picture — do not two-column pack it.
 (function () {
   "use strict";
@@ -337,24 +359,20 @@
   const LABEL_TOO_MANY = 48; // more regions than this starts costing
   const LABEL_TOO_FEW = 4; // fewer than this starts costing
   const LABEL_TOO_FEW_WEIGHT = 4; // too-few penalty is this × (LABEL_TOO_FEW − n)
-  const LABEL_SHORT_LEN = 4; // 00–23, 1st–31st — short-label path (max square)
-  const LABEL_SHORT_FILL = 0.84; // font = this × max square on small cells
-  const LABEL_LONG_FILL = 0.7; // month / year names
-  const LABEL_HOUR_FILL = 0.38; // long “12:30” / minute / second sit tighter
   const LABEL_TINY_FRAC = 0.35; // skip fragments smaller than this × median region
   const LABEL_FIT_PAD = 0.98; // refuse draw if glyph exceeds this of the place box
   const LABEL_FALLBACK_PX = 16; // if fontFit fails, use this
-  const LABEL_MAX_PX = 28; // cap on large maps so 0.84 does not blow up month/year glyphs
-  const LABEL_SQUARE_INSET = 1; // cells of padding inside the place square
+  const LABEL_MAX_PX = 28; // cap on large maps so glyphs do not blow up
+  const LABEL_FILL = 0.84; // font = this × the place rectangle
+  const LABEL_OUTLIER_RATIO = 0.55; // one much-smaller slot may use a smaller font; the rest keep the shared size
   const LABEL_LIVE_MS = 10 * MS_SEC; // live glyph place; raise to hold still, lower to chase the fill
   const LABEL_FONT = "500 "; // CSS font-weight prefix before the px size
   const LABEL_FONT_STACK = "px system-ui, sans-serif";
-  const NEAR_SQUARE_AREA_MUL = 1.15; // largestRectangle: take a squarer rect if area is close
-  const SQUAREISH_AREA_DEN = 2; // packed “square” is min(w,h) on the larger side, area / this
 
   // Zoom / overlay
-  const INSET_MAX_D = MS_SEC; // inset cell must be ≤1s
-  const ZOOM_PARENT_SHARE = 0.12; // max parent cells the yellow box may cover
+  const INSET_MIN_D = 1; // finest inset cell: 1ms
+  const INSET_MAX_D = MS_SEC; // coarsest inset cell: 1s — min zoom keeps the second panel at this
+  const ZOOM_PARENT_SHARE = 0.28; // half-side yellow box covers 1/4 of parent cells
   const ZOOM_RANGE_SHARE = 0.2; // max fraction of the time range
   const ZOOM_BUDGET_QUARTER = 2; // target = budget / this. Raise = smaller yellow box; 1 = use the full budget
   const ZOOM_COLLECT_MIN = 64; // always consider packed blocks at least this large
@@ -362,13 +380,16 @@
   const ZOOM_ASPECT_WEIGHT = 2500000; // row layout: |log(boxAspect / parentAspect)| × this — beat area so the inset matches the main panel
   const ZOOM_ASPECT_LOG_TIE = 0.08; // treat aspects this close as equal (~8%), then use area
   const ZOOM_LABEL_MIN_PX = 18; // if inset glyphs would be smaller, take a coarser (larger) window
+  const ZOOM_RES_MAX = 1.15; // inset cells may only slightly exceed the parent grid
+  const ZOOM_CSS_SLACK = 1.15; // inset cells may only slightly exceed the CSS pixel count of the tile
+  const ZOOM_REFINE_UPGRADE = 1.05; // keep exact 0.1–1s k if it already fills this fraction of the kMax budget
   const CURRENT_UNIT_MAX_SHARE = 0.9; // if coarsest unit is almost the whole map, drop to next
   const DPR_MAX = 3; // cap devicePixelRatio on bounds / labels / highlight
   const HL_PAD_PX = 3; // yellow frame sits outside pixels; hl canvas is padded
   const CURRENT_OUTLINE_W = 1.4; // stroke around the live coarsest unit
   const ZOOM_FRAME_W = 2; // yellow box stroke (CSS px)
   const ZOOM_FRAME_OUTSET = 1; // yellow box sits this many px outside the cells
-  const INSET_FRAME_OUT = 2; // .map-zoom box-shadow; keep = ZOOM_FRAME_OUTSET + ZOOM_FRAME_W/2
+  const INSET_FRAME_OUT = 2; // .map-zoom outline; keep = ZOOM_FRAME_OUTSET + ZOOM_FRAME_W/2
 
   // Bound strokes (CSS px)
   const BOUND_W = [0.6, 0.4, 0.2]; // [coarsest, middle, fallback]
@@ -385,6 +406,7 @@
   const AVAIL_H_MIN = 120; // never treat remaining height as smaller than this
   const TILE_MIN = 80; // smallest Fit tile side
   const STACK_COL_GAP = 28; // column: keep the caption from kissing the next map
+  const STACK_ROW_FRAME = 4; // yellow outline / hl pad sticks out of a row tile — add to the gutter
   const CAPTION_FALLBACK = 22; // caption height if the node is not laid out yet
   const CAPTION_MIN = 18; // never reserve less than this under a tile
   const CAPTION_PAD = 4; // added to measured caption height
@@ -683,19 +705,17 @@
 
   const ZOOM_MIN_AREA = 8; // smallest packed parent block we will zoom (must match collectHilbertBlocks)
 
-  function collectHilbertBlocks(width, height, nowIdx, maxArea) { // packed partitions that contain now, area ≤ maxArea
-    const out = [];
-    function walk(x, y, ax, ay, bx, by, iStart) { // same split as buildHilbert; keep partitions that contain nowIdx
+  function walkHilbertPartitions(width, height, visit, nowIdx, stopArea) { // Gilbert split; optional nowIdx prune; stopArea skips children
+    function walk(x, y, ax, ay, bx, by, iStart) {
       const w = Math.abs(ax + ay);
       const h = Math.abs(bx + by);
       const area = w * h;
       const iEnd = iStart + area;
-      if (nowIdx < iStart || nowIdx >= iEnd) return;
+      if (nowIdx != null && (nowIdx < iStart || nowIdx >= iEnd)) return;
       const box = hilbertCellRect(x, y, ax, ay, bx, by);
-      if (area >= ZOOM_MIN_AREA && area <= maxArea && box.w * box.h === area) {
-        out.push({ box, i0: iStart, i1: iEnd, area });
-      }
+      visit(box, iStart, iEnd, area);
       if (h === 1 || w === 1) return;
+      if (stopArea != null && area <= stopArea) return;
       const dax = sign(ax), day = sign(ay);
       const dbx = sign(bx), dby = sign(by);
       let ax2 = Math.floor(ax / 2), ay2 = Math.floor(ay / 2);
@@ -722,7 +742,71 @@
       }
     }
     walk(0, 0, width, 0, 0, height, 0);
+  }
+
+  function collectHilbertBlocks(width, height, nowIdx, maxArea) { // packed partitions that contain now, area ≤ maxArea
+    const out = [];
+    walkHilbertPartitions(width, height, (box, i0, i1, area) => {
+      if (area >= ZOOM_MIN_AREA && area <= maxArea && box.w * box.h === area) {
+        out.push({ box, i0, i1, area });
+      }
+    }, nowIdx, null);
     return out;
+  }
+
+  const packedTileCache = new Map();
+  let packScratch = null;
+
+  function collectPackedTiles(width, height, wantW, wantH) { // every packed w×h window on the curve, not only Gilbert nodes
+    const wantArea = wantW * wantH;
+    if (!(wantArea > 0) || wantW < 1 || wantH < 1 || wantW > width || wantH > height) return [];
+    const key = width + "x" + height + ":" + wantW + "x" + wantH;
+    const hit = packedTileCache.get(key);
+    if (hit) return hit;
+    const g = getHilbert(width, height);
+    const xs = g.xs, ys = g.ys, n = g.n;
+    if (wantArea > n) return [];
+    if (!packScratch || packScratch.length < n) {
+      packScratch = {
+        minx: new Int32Array(n),
+        maxx: new Int32Array(n),
+        miny: new Int32Array(n),
+        maxy: new Int32Array(n),
+        length: n
+      };
+    }
+    const minxQ = packScratch.minx, maxxQ = packScratch.maxx, minyQ = packScratch.miny, maxyQ = packScratch.maxy;
+    let minxH = 0, minxT = 0, maxxH = 0, maxxT = 0, minyH = 0, minyT = 0, maxyH = 0, maxyT = 0;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const xv = xs[i], yv = ys[i];
+      while (minxT > minxH && xs[minxQ[minxT - 1]] >= xv) minxT--;
+      minxQ[minxT++] = i;
+      while (maxxT > maxxH && xs[maxxQ[maxxT - 1]] <= xv) maxxT--;
+      maxxQ[maxxT++] = i;
+      while (minyT > minyH && ys[minyQ[minyT - 1]] >= yv) minyT--;
+      minyQ[minyT++] = i;
+      while (maxyT > maxyH && ys[maxyQ[maxyT - 1]] <= yv) maxyT--;
+      maxyQ[maxyT++] = i;
+      const i0 = i - wantArea + 1;
+      if (i0 < 0) continue;
+      while (minxH < minxT && minxQ[minxH] < i0) minxH++;
+      while (maxxH < maxxT && maxxQ[maxxH] < i0) maxxH++;
+      while (minyH < minyT && minyQ[minyH] < i0) minyH++;
+      while (maxyH < maxyT && maxyQ[maxyH] < i0) maxyH++;
+      const x0 = xs[minxQ[minxH]], x1v = xs[maxxQ[maxxH]];
+      const y0 = ys[minyQ[minyH]], y1v = ys[maxyQ[maxyH]];
+      if (x1v - x0 + 1 === wantW && y1v - y0 + 1 === wantH) {
+        out.push({ box: { x: x0, y: y0, w: wantW, h: wantH }, i0, i1: i0 + wantArea, area: wantArea });
+      }
+    }
+    if (packedTileCache.size >= 24) packedTileCache.delete(packedTileCache.keys().next().value);
+    packedTileCache.set(key, out);
+    return out;
+  }
+
+  function collectHilbertTiles(width, height, wantW, wantH) { // packed w×h windows, curve order
+    return collectPackedTiles(width, height, wantW, wantH);
   }
 
   function findHilbertBlock(width, height, nowIdx, maxArea) { // largest packed partition containing now
@@ -789,10 +873,12 @@
     return null;
   }
 
-  function buildZoomHilbert(parentG, box, i0, i1, k) { // each parent cell → k×k; path stays 4-connected
+  function buildZoomHilbert(parentG, box, i0, i1, k, indices) { // each parent cell → k×k; path stays 4-connected
     // True zoom: each parent cell → k×k block in place. Path must not teleport.
     const W = box.w * k;
     const H = box.h * k;
+    const seq = indices || null;
+    const count = seq ? seq.length : (i1 - i0);
     const n = W * H;
     const xs = new Uint16Array(n);
     const ys = new Uint16Array(n);
@@ -803,14 +889,16 @@
     let t = 0;
     let prevx = -1;
     let prevy = -1;
-    for (let i = i0; i < i1; i++) {
+    for (let s = 0; s < count; s++) {
+      const i = seq ? seq[s] : (i0 + s);
       const ox = (parentG.xs[i] - box.x) * k;
       const oy = (parentG.ys[i] - box.y) * k;
       let nextOx = null;
       let nextOy = null;
-      if (i + 1 < i1) {
-        nextOx = (parentG.xs[i + 1] - box.x) * k;
-        nextOy = (parentG.ys[i + 1] - box.y) * k;
+      if (s + 1 < count) {
+        const ni = seq ? seq[s + 1] : (i0 + s + 1);
+        nextOx = (parentG.xs[ni] - box.x) * k;
+        nextOy = (parentG.ys[ni] - box.y) * k;
       }
       let v = pickZoomVariant(vars, k, ox, oy, prevx, prevy, nextOx, nextOy);
       if (!v) v = pickZoomVariant(vars, k, ox, oy, prevx, prevy, null, null);
@@ -857,7 +945,7 @@
 
   const NICE_DIM_SET = new Set(NICE_DIMS); // O(1) lookup for SCORE_NICE_DIM_BONUS
   const FINE_CELL_DURS = [MS_SEC, 500, 250, MS_100]; // parent: prefer 1s, then 0.5 / 0.25 / 0.1 if a cell is ≥ MIN_CELL_PX
-  const INSET_CELL_DURS = [MS_100, 250, 500, MS_SEC]; // inset cell must be exactly one of these (never 0.625s)
+  const INSET_CELL_DURS = [MS_100, 250, 500, MS_SEC]; // parent-grid candidates so a cell can refine to ≤1s
   const ZOOM_KS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 20, 24, 25, 30, 32, 36, 40, 48, 60, 64]; // candidate k for k²×D parent durations
 
   function exactZoomK(parentDur, D) { // integer k with k² × D = parent cell duration
@@ -883,18 +971,27 @@
     return best;
   }
 
-  function planInset(parentDur, srcW, srcH, cssWidth) { // finest allowed D that still fits the cell cap
-    const cap = maxCellsFor(cssWidth, srcW / srcH);
-    return planInsetWithCap(parentDur, srcW, srcH, cap) ||
-      planInsetWithCap(parentDur, srcW, srcH, MAX_CELLS_HARD); // tight tile: still show an inset rather than hide the panel
+  function insetCellCap(srcW, srcH, cssWidth, parentW, parentH) { // do not let the inset greatly out-resolve the parent or the CSS tile
+    const aspect = srcW / Math.max(1, srcH);
+    const cssH = Math.max(1, cssWidth / clamp(aspect || 1, ASPECT_MIN, ASPECT_MAX));
+    const cssN = Math.ceil(Math.max(1, cssWidth) * cssH);
+    const parentN = Math.max(1, (parentW || 0) * (parentH || 0));
+    const fromCss = Math.ceil(cssN * ZOOM_CSS_SLACK);
+    const fromParent = parentN > 1 ? Math.ceil(parentN * ZOOM_RES_MAX) : MAX_CELLS_HARD;
+    const fromHard = maxCellsFor(cssWidth, aspect);
+    return Math.max(ZOOM_MIN_AREA * FACTOR_MIN * FACTOR_MIN, Math.min(fromHard, fromCss, fromParent));
   }
 
-  function isZoomableDur(cellDur) { // parent cell can refine to 0.1–1s
+  function planInset(parentDur, srcW, srcH, cssWidth, parentW, parentH) { // finest D that fits the inset cap — no HARD fallback (that blew past the parent)
+    return planInsetWithCap(parentDur, srcW, srcH, insetCellCap(srcW, srcH, cssWidth, parentW, parentH));
+  }
+
+  function isZoomableDur(cellDur) { // parent cell can refine to some D in [1ms, 1s]
     if (cellDur <= INSET_MAX_D) return true;
-    for (let i = 0; i < INSET_CELL_DURS.length; i++) {
-      if (exactZoomK(cellDur, INSET_CELL_DURS[i]) >= FACTOR_MIN) return true;
-    }
-    return false;
+    const k = Math.ceil(Math.sqrt(cellDur / INSET_MAX_D) - 1e-12);
+    if (k < 1) return false;
+    const D = cellDur / (k * k);
+    return D >= INSET_MIN_D - 1e-9 && D <= INSET_MAX_D + 1;
   }
 
   function maxCellsFor(cssWidth, targetAspect) { // pixel budget between MAX_CELLS and MAX_CELLS_HARD
@@ -903,9 +1000,9 @@
     return clamp(Math.ceil(cssWidth * cssH), MAX_CELLS, MAX_CELLS_HARD);
   }
 
-  function pickFineCellDur(durationMs, cssWidth, targetAspect) { // 1s (or fraction) when the whole range fits the pixel budget
+  function pickFineCellDur(durationMs, cssWidth, targetAspect, cellCap) { // 1s (or fraction) when the whole range fits the pixel budget
     if (!(durationMs > 0) || !(cssWidth > 0)) return null;
-    const cap = maxCellsFor(cssWidth, targetAspect);
+    const cap = cellCap > 0 ? cellCap : maxCellsFor(cssWidth, targetAspect);
     if (durationMs / MS_SEC > cap) return null;
     const cssH = Math.max(1, cssWidth / clamp(targetAspect, ASPECT_MIN, ASPECT_MAX));
     const px = cssWidth * cssH;
@@ -917,6 +1014,16 @@
       if (Math.sqrt(px / cells) >= MIN_CELL_PX) chosen = D;
     }
     return chosen;
+  }
+
+  function pickInsetPreferDur(durationMs, cap) { // finest nice D that still fits the inset cap — shrink window → finer cells
+    const durs = [1, 2, 5, 10, 20, 50, 100, 250, 500, MS_SEC];
+    for (let i = 0; i < durs.length; i++) {
+      const D = durs[i];
+      const cells = Math.ceil(durationMs / D);
+      if (cells >= MIN_CELLS && cells <= cap) return D;
+    }
+    return MS_SEC;
   }
 
   function scoreGrid(w, h, cells, cellDur, targetAspect, targetCells, preferDur) { // lower is better; must stay 1s-zoomable when parent > 1s
@@ -996,12 +1103,14 @@
     return null;
   }
 
-  function pickGrid(durationMs, targetAspect, cssWidth) { // w×h and cellDur for this range; leftover cells stay surplus/black
+  function pickGrid(durationMs, targetAspect, cssWidth, cellCap) { // w×h and cellDur for this range; leftover cells stay surplus/black
     const unixGrid = pickUnixSquare(durationMs);
     if (unixGrid) return unixGrid;
     let best = null;
-    const cap = maxCellsFor(cssWidth, targetAspect);
-    const preferDur = pickFineCellDur(durationMs, cssWidth, targetAspect);
+    const cap = cellCap > 0 ? cellCap : maxCellsFor(cssWidth, targetAspect);
+    const preferDur = cellCap > 0
+      ? pickInsetPreferDur(durationMs, cap)
+      : pickFineCellDur(durationMs, cssWidth, targetAspect);
     const targetCells = preferDur
       ? Math.min(cap, Math.ceil(durationMs / preferDur))
       : Math.min(cap, Math.max(MIN_CELLS, durationMs / MS_SEC));
@@ -1014,7 +1123,9 @@
       if (cells < MIN_CELLS && cellDur > 1) return;
       const needsZoom = durationMs / MS_SEC > cap && cellDur > INSET_MAX_D;
       if (needsZoom && !isZoomableDur(cellDur)) return;
-      const durCap = needsZoom || isZoomableDur(cellDur) ? Math.max(cap, MAX_CELLS_HARD) : cap;
+      const durCap = cellCap > 0
+        ? cap
+        : (needsZoom || isZoomableDur(cellDur) ? Math.max(cap, MAX_CELLS_HARD) : cap);
       if (cells > durCap) return;
 
       const pairs = factorPairs(cells);
@@ -1055,18 +1166,50 @@
     return best;
   }
 
-  function pickInsetK(parentDur, srcW, srcH, cssWidth) { // planInset wrapped as {k,D} or null
-    const plan = planInset(parentDur, srcW, srcH, cssWidth);
+  function chooseZoomK(parentDur, srcW, srcH, cssWidth, parentW, parentH) { // fill the tile; prefer D ≤ 1s without a huge inset grid
+    const cap = insetCellCap(srcW, srcH, cssWidth, parentW, parentH);
+    const area = Math.max(1, srcW * srcH);
+    let kCss = Math.floor(Math.sqrt(cap / area));
+    if (kCss < 1) kCss = 1;
+    const kFine = Math.max(1, Math.floor(Math.sqrt(parentDur / INSET_MIN_D))); // D ≥ 1ms
+    const kCoarse = Math.max(1, Math.ceil(Math.sqrt(parentDur / INSET_MAX_D) - 1e-12)); // D ≤ 1s
+    let k = Math.min(kCss, kFine);
+    if (k < kCoarse && kCoarse <= kFine) {
+      const cells = area * kCoarse * kCoarse;
+      const parentN = Math.max(1, (parentW || 0) * (parentH || 0));
+      if (cells <= Math.max(cap, parentN) * 1.25) k = kCoarse; // one parent-sized inset is OK if that is what 1s needs
+    }
+    return k < 1 ? 0 : k;
+  }
+
+  function pickInsetK(parentDur, srcW, srcH, cssWidth, parentW, parentH) { // planInset wrapped as {k,D} or null
+    const plan = planInset(parentDur, srcW, srcH, cssWidth, parentW, parentH);
     return plan && plan.k >= FACTOR_MIN ? plan : null;
+  }
+
+  function insetPlanForBox(grid, box, cssWidth) { // k×k with inset D in [1ms, 1s]; k=1 when the parent is already 1s
+    const k = chooseZoomK(grid.cellDur, box.w, box.h, cssWidth, grid.w, grid.h);
+    if (k < 1) return null;
+    const D = grid.cellDur / (k * k);
+    if (D > INSET_MAX_D + 1) return null;
+    return { k: k, D: D };
+  }
+
+  function letterboxIn(aspect, boxW, boxH) { // largest aspect-w/h rectangle that fits in boxW×boxH
+    const boxA = boxW / Math.max(1, boxH);
+    if (Math.abs(Math.log(boxA / Math.max(1e-6, aspect))) < 0.02) {
+      return { w: boxW, h: boxH }; // same aspect as the tile — fill, no black bars
+    }
+    if (boxA > aspect) {
+      return { w: Math.max(MIN_CSS_PX, Math.round(boxH * aspect)), h: boxH };
+    }
+    return { w: boxW, h: Math.max(MIN_CSS_PX, Math.round(boxW / aspect)) };
   }
 
   function insetLetterbox(boxW, boxH, k, tileW, tileH) { // CSS box of the refined block inside the Fit tile
     const w = boxW * k, h = boxH * k;
-    const aspect = w / Math.max(1, h);
-    if (tileW / Math.max(1, tileH) > aspect) {
-      return { cssW: Math.max(1, tileH * aspect), cssH: tileH };
-    }
-    return { cssW: tileW, cssH: Math.max(1, tileW / aspect) };
+    const box = letterboxIn(w / Math.max(1, h), tileW, tileH);
+    return { cssW: box.w, cssH: box.h };
   }
 
   function zoomBoxAspectErr(box, targetAspect) { // |log((w/h) / target)| — 0 is a match
@@ -1074,24 +1217,125 @@
     return Math.abs(Math.log(a / Math.max(1e-6, targetAspect)));
   }
 
-  function zoomWantParentAspect() { // row: yellow box should echo the parent map; column keeps any packed rect
-    if (pageIsPortrait()) return false;
-    if (stackEl.classList.contains("fit-col")) return false;
-    if (stackEl.classList.contains("fit-row")) return true;
-    const box = availBox();
-    return box.w >= box.h * WIDE_STAGE_RATIO;
+  function zoomFamilyAspect(boxes, parentAspect) { // inset always follows the parent panel
+    return parentAspect;
+  }
+
+  function zoomTileEdge(len, n, i) { // n×n cover: edge i of 0..n, last edge is len
+    return Math.round(i * len / n);
+  }
+
+  function zoomColAt(len, n, v) { // which strip of an n-way split contains cell v
+    let lo = 0, hi = n - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (zoomTileEdge(len, n, mid) <= v) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  }
+
+  function makeZoomTiling(width, height, n) { // n×n same-aspect tiles; no overlap, full cover
+    const tiles = [];
+    for (let row = 0; row < n; row++) {
+      const y = zoomTileEdge(height, n, row);
+      const h = zoomTileEdge(height, n, row + 1) - y;
+      if (h < 1) continue;
+      for (let col = 0; col < n; col++) {
+        const x = zoomTileEdge(width, n, col);
+        const w = zoomTileEdge(width, n, col + 1) - x;
+        if (w < 1) continue;
+        tiles.push({ x, y, w, h, col, row });
+      }
+    }
+    return tiles;
+  }
+
+  function zoomTileAtCell(width, height, n, x, y) { // the unique covering tile for parent cell (x,y)
+    const col = zoomColAt(width, n, x);
+    const row = zoomColAt(height, n, y);
+    const x0 = zoomTileEdge(width, n, col);
+    const y0 = zoomTileEdge(height, n, row);
+    return {
+      x: x0, y: y0,
+      w: zoomTileEdge(width, n, col + 1) - x0,
+      h: zoomTileEdge(height, n, row + 1) - y0,
+      col, row
+    };
+  }
+
+  function boxContainsCell(box, g, nowIdx) { // now's parent cell sits inside the yellow box
+    const x = g.xs[nowIdx], y = g.ys[nowIdx];
+    return x >= box.x && y >= box.y && x < box.x + box.w && y < box.y + box.h;
+  }
+
+  function zoomLevelNs(grid, cssW) { // valid n=2,4,8… ; coarsest first; skip tiles with D > 1s
+    const out = [];
+    for (let z = 1; z < 12; z++) {
+      const n = 1 << z;
+      if (n > grid.w || n > grid.h) break;
+      const tw = Math.max(1, zoomTileEdge(grid.w, n, 1) - zoomTileEdge(grid.w, n, 0));
+      const th = Math.max(1, zoomTileEdge(grid.h, n, 1) - zoomTileEdge(grid.h, n, 0));
+      if (tw * th < ZOOM_MIN_AREA) break;
+      const plan = insetPlanForBox(grid, { w: tw, h: th }, cssW);
+      if (!plan) continue;
+      out.push({ n, w: tw, h: th, area: tw * th, k: plan.k, D: plan.D, level: z });
+    }
+    return out;
+  }
+
+  function pickZoomLevel(levels, storedArea) { // 0 / 1e15 → coarsest (largest tile with D ≤ 1s)
+    if (!levels.length) return null;
+    let best = levels[0];
+    if (storedArea > 0 && storedArea < 1e14) {
+      let bestD = Infinity;
+      for (let i = 0; i < levels.length; i++) {
+        const d = Math.abs(levels[i].area - storedArea);
+        if (d < bestD || (d === bestD && levels[i].area > best.area)) {
+          bestD = d;
+          best = levels[i];
+        }
+      }
+    }
+    return best;
+  }
+
+  function dyadicZoomTargets(grid) { // kept for callers that only need sizes; prefers n-grid tiles
+    return zoomLevelNs(grid, 0).map((L) => ({ w: L.w, h: L.h, area: L.area, level: L.level, n: L.n }));
+  }
+
+  function matchZoomBlock(blocks, wantW, wantH, parentAspect) { // packed same-aspect block nearest this dyadic size
+    const wantArea = wantW * wantH;
+    let exact = null;
+    let best = null;
+    let bestD = Infinity;
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      if (b.box.w * b.box.h !== b.area) continue;
+      if (zoomBoxAspectErr(b.box, parentAspect) > ZOOM_ASPECT_LOG_TIE) continue;
+      if (b.box.w === wantW && b.box.h === wantH) {
+        exact = b;
+        continue;
+      }
+      const d = Math.abs(Math.log(b.area / Math.max(1, wantArea)));
+      if (d < bestD) {
+        bestD = d;
+        best = b;
+      }
+    }
+    return exact || best;
   }
 
   function estimateInsetLabelPx(zStart, zEnd, box, k, parentDur, tileW, tileH) { // typical glyph if this window were the inset
-    const D = parentDur / (k * k);
+    const kk = k >= FACTOR_MIN ? k : 1; // day parent is already ≤1s — letterbox the block as-is
+    const D = k >= FACTOR_MIN ? parentDur / (k * k) : parentDur;
     if (!(D > 0) || !(tileW > 0) || !(tileH > 0)) return 0;
     const levels = pickLevels(zStart, zEnd, D);
     if (!levels.length) return 0;
     const unit = levels[pickLabelLevelIndex(levels, zStart, zEnd)];
     const n = Math.max(1, (zEnd - zStart) / unit.typical);
-    const css = insetLetterbox(box.w, box.h, k, tileW, tileH);
-    const short = unit.id === "hour" || unit.id === "day" || unit.id === "minute" || unit.id === "second";
-    return Math.min(css.cssW, css.cssH) / n * (short ? LABEL_SHORT_FILL : LABEL_LONG_FILL);
+    const css = insetLetterbox(box.w, box.h, kk, tileW, tileH);
+    return Math.min(css.cssW, css.cssH) / n * LABEL_FILL;
   }
 
   function pickLevels(start, end, cellDur) { // up to 3 units, each large enough to draw and not a single slab
@@ -1147,40 +1391,20 @@
     return out;
   }
 
-  function largestRectangle(mask, w, h) { // max-area rect, squarish rect, largest inscribed square
-    const height = new Int32Array(w);
-    let best = { x: 0, y: 0, w: 0, h: 0, area: 0 };
-    let bestSq = { x: 0, y: 0, w: 0, h: 0, area: 0, sq: Infinity };
-    let bestMaxSq = { x: 0, y: 0, w: 0, h: 0, area: 0 };
-    const stackH = new Int32Array(w + 1);
-    const stackI = new Int32Array(w + 1);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) height[x] = mask[y * w + x] ? height[x] + 1 : 0;
+  function forEachHistRect(mask, bw, bh, fn) { // every maximal axis-aligned rectangle in the mask
+    const height = new Int32Array(bw);
+    const stackH = new Int32Array(bw + 1);
+    const stackI = new Int32Array(bw + 1);
+    for (let y = 0; y < bh; y++) {
+      for (let x = 0; x < bw; x++) height[x] = mask[y * bw + x] ? height[x] + 1 : 0;
       let sp = 0;
-      for (let x = 0; x <= w; x++) {
-        const ht = x < w ? height[x] : 0;
+      for (let x = 0; x <= bw; x++) {
+        const ht = x < bw ? height[x] : 0;
         let start = x;
         while (sp && stackH[sp - 1] > ht) {
           const sh = stackH[--sp];
           const si = stackI[sp];
-          const width = x - si;
-          const area = width * sh;
-          const rect = { x: si, y: y - sh + 1, w: width, h: sh, area };
-          if (area > best.area) best = rect;
-          const sq = Math.abs(Math.log((width || 1) / (sh || 1)));
-          if (area * SQUAREISH_AREA_DEN >= (best.area || area) && (sq < bestSq.sq || area > bestSq.area * NEAR_SQUARE_AREA_MUL)) {
-            bestSq = { x: si, y: y - sh + 1, w: width, h: sh, area, sq };
-          }
-          const side = Math.min(width, sh);
-          if (side * side > bestMaxSq.area) {
-            bestMaxSq = {
-              x: si + ((width - side) >> 1),
-              y: (y - sh + 1) + ((sh - side) >> 1),
-              w: side,
-              h: side,
-              area: side * side
-            };
-          }
+          fn(si, y - sh + 1, x - si, sh);
           start = si;
         }
         stackH[sp] = ht;
@@ -1188,18 +1412,37 @@
         sp++;
       }
     }
-    return { max: best, square: bestSq.area ? bestSq : best, maxSquare: bestMaxSq.area ? bestMaxSq : best };
   }
 
-  function centerSquareInRect(rect, side) { // same side as the max square, slid to the rect's center
-    const s = Math.max(1, Math.min(side, rect.w, rect.h));
-    return {
-      x: rect.x + ((rect.w - s) >> 1),
-      y: rect.y + ((rect.h - s) >> 1),
-      w: s,
-      h: s,
-      area: s * s
-    };
+  function maxAspectInside(boxW, boxH, tw, th) { // largest landscape tw:th (tw ≥ th) box in boxW×boxH
+    if (!(boxW > 0) || !(boxH > 0) || !(tw > 0) || !(th > 0)) return { w: 0, h: 0, area: 0 };
+    if (tw < th) { const swap = tw; tw = th; th = swap; }
+    const s = Math.min(boxW / tw, boxH / th);
+    let w = Math.max(1, Math.floor(tw * s + 1e-9));
+    let h = Math.max(1, Math.floor(th * s + 1e-9));
+    if (w > boxW) w = boxW;
+    if (h > boxH) h = boxH;
+    if (h > w) h = w; // never portrait
+    return { w: w, h: h, area: w * h };
+  }
+
+  function labelSlotKind(texts) { // layer-wide slot: square (≤4), 4×3 (4–6), else 16×9
+    let le4 = true;
+    let mid = true;
+    for (let i = 0; i < texts.length; i++) {
+      const n = texts[i].length;
+      if (n > 4) le4 = false;
+      if (n < 4 || n > 6) mid = false;
+    }
+    if (le4) return "square";
+    if (mid) return "4x3";
+    return "16x9";
+  }
+
+  function slotRatios(kind) { // only horizontal: 1×1, 4×3, 16×9 — never 3×4 / 9×16
+    if (kind === "square") return [[1, 1]];
+    if (kind === "4x3") return [[4, 3]];
+    return [[16, 9]];
   }
 
   function maskCentroid(mask, bw, bh) { // centre of mass of filled cells
@@ -1213,45 +1456,48 @@
     return n ? { x: sx / n, y: sy / n } : { x: bw / 2, y: bh / 2 };
   }
 
-  function nearestFilledSquare(mask, bw, bh, cx, cy, side) { // side×side block in the mask, closest to (cx, cy)
-    const s = Math.max(1, side | 0);
-    const xTry = Math.floor(cx - s / 2);
-    const yTry = Math.floor(cy - s / 2);
-    const covers = (x0, y0) => {
-      if (x0 < 0 || y0 < 0 || x0 + s > bw || y0 + s > bh) return false;
-      for (let y = 0; y < s; y++) {
-        for (let x = 0; x < s; x++) {
-          if (!mask[(y0 + y) * bw + (x0 + x)]) return false;
-        }
+  function landscapeRoom(x, y, w, h) { // largest horizontal (w ≥ h) rect inside this one
+    if (!(w > 0) || !(h > 0)) return { x: x, y: y, w: 0, h: 0, area: 0 };
+    if (w >= h) return { x: x, y: y, w: w, h: h, area: w * h };
+    return { x: x, y: y + ((h - w) >> 1), w: w, h: w, area: w * w };
+  }
+
+  function largestSlotInMask(mask, bw, bh, kind, cx, cy) { // largest horizontal room, then 1×1 / 4×3 / 16×9 centered in it
+    const ratios = slotRatios(kind);
+    const tw = ratios[0][0], th = ratios[0][1];
+    let bestRoom = 0;
+    const rooms = [];
+    forEachHistRect(mask, bw, bh, (x, y, w, h) => {
+      const room = landscapeRoom(x, y, w, h);
+      if (!room.area) return;
+      if (room.area > bestRoom) {
+        bestRoom = room.area;
+        rooms.length = 0;
+        rooms.push(room);
+      } else if (room.area === bestRoom) {
+        rooms.push(room);
       }
-      return true;
+    });
+    if (!bestRoom) return { x: 0, y: 0, w: 0, h: 0, area: 0 };
+    let room = rooms[0], bestD = Infinity;
+    for (let i = 0; i < rooms.length; i++) {
+      const r = rooms[i];
+      const dx = r.x + r.w / 2 - cx, dy = r.y + r.h / 2 - cy;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        room = r;
+      }
+    }
+    const fit = maxAspectInside(room.w, room.h, tw, th);
+    if (!fit.area || fit.h > fit.w) return { x: 0, y: 0, w: 0, h: 0, area: 0 };
+    return {
+      x: room.x + ((room.w - fit.w) >> 1),
+      y: room.y + ((room.h - fit.h) >> 1),
+      w: fit.w,
+      h: fit.h,
+      area: fit.area
     };
-    if (covers(xTry, yTry)) return { x: xTry, y: yTry, w: s, h: s, area: s * s };
-    const stride = bw + 1;
-    const sat = new Int32Array(stride * (bh + 1));
-    for (let y = 1; y <= bh; y++) {
-      let row = 0;
-      for (let x = 1; x <= bw; x++) {
-        row += mask[(y - 1) * bw + (x - 1)] ? 1 : 0;
-        sat[y * stride + x] = sat[(y - 1) * stride + x] + row;
-      }
-    }
-    const need = s * s;
-    let best = null, bestD = Infinity;
-    for (let y = 0; y + s <= bh; y++) {
-      for (let x = 0; x + s <= bw; x++) {
-        const sum = sat[(y + s) * stride + (x + s)] - sat[y * stride + (x + s)] -
-          sat[(y + s) * stride + x] + sat[y * stride + x];
-        if (sum !== need) continue;
-        const dx = x + s / 2 - cx, dy = y + s / 2 - cy;
-        const d = dx * dx + dy * dy;
-        if (d < bestD) {
-          bestD = d;
-          best = { x, y, w: s, h: s, area: need };
-        }
-      }
-    }
-    return best;
   }
 
   function rectsOverlap(a, b, pad) { // axis-aligned boxes, pad extra on each side
@@ -1270,13 +1516,8 @@
     return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
   }
 
-  function labelFillFrac(unitId) { // long labels: hours sit tighter than month names
-    if (unitId === "hour" || unitId === "minute" || unitId === "second") return LABEL_HOUR_FILL;
-    return LABEL_LONG_FILL;
-  }
-
   function fontFit(ctx, text, pw, ph, frac) { // largest font that fits frac of the box
-    const f = frac == null ? LABEL_LONG_FILL : frac;
+    const f = frac == null ? LABEL_FILL : frac;
     const maxW = Math.max(1, pw * f);
     const maxH = Math.max(1, ph * f);
     let size = maxH;
@@ -1339,6 +1580,8 @@
       this.customRanges = [];
       this.layout = null;
       this.zoomBox = null;
+      this.zoomRange = null;
+      this._zoomLock = null; // {n,w,h,k} covering-grid zoom step
       this._lastKey = "";
       this._liveLabel = null; // live unit glyph; place is refreshed every LABEL_LIVE_MS
       this._tipIdx = -1;
@@ -1351,6 +1594,7 @@
       if (this.start !== start || this.end !== end) {
         this.zoomRange = null;
         this.zoomBox = null;
+        this._zoomLock = null;
         this._zoomMinute = undefined;
       }
       this.start = start;
@@ -1393,22 +1637,33 @@
       }
     }
 
-    rebuildZoom(cssWidth, parentLayout, win) { // inset: same cells as win.box, refined ×k, inherit coarser bounds
-      if (!parentLayout || !win || win.k < FACTOR_MIN || cssWidth < MIN_CSS_PX) return;
+    rebuildZoom(cssWidth, parentLayout, win) { // inset: each parent cell → k×k in place so fill matches the yellow box
+      if (!parentLayout || !win || !win.box || cssWidth < MIN_CSS_PX) return;
       this.start = win.start;
       this.end = win.end;
-      const parentDur = parentLayout.grid.cellDur;
-      const cellDur = parentDur / (win.k * win.k);
-      const g = buildZoomHilbert(parentLayout.g, win.box, win.i0, win.i1, win.k);
+      const parent = parentLayout.grid;
+      const k = win.k >= 1 ? win.k : chooseZoomK(parent.cellDur, win.box.w, win.box.h, cssWidth, parent.w, parent.h);
+      if (k < 1) return;
+      const cellDur = parent.cellDur / (k * k);
+      const idx = win.idx || null;
+      const nParent = idx ? idx.length : (win.i1 - win.i0);
+      if (!(nParent > 0)) return;
+      const g = buildZoomHilbert(parentLayout.g, win.box, win.i0, win.i1, k, idx);
       const grid = {
-        w: win.box.w * win.k,
-        h: win.box.h * win.k,
+        w: win.box.w * k,
+        h: win.box.h * k,
         cells: g.n,
         cellDur,
-        leftover: win.box.w * win.k * win.box.h * win.k - g.n
+        leftover: win.box.w * k * win.box.h * k - g.n
       };
       const cellStart = new Float64Array(grid.cells);
-      for (let i = 0; i < grid.cells; i++) cellStart[i] = this.start + i * cellDur;
+      const parentStart = parentLayout.cellStart;
+      const kk = k * k;
+      for (let p = 0; p < nParent; p++) {
+        const pi = idx ? idx[p] : (win.i0 + p);
+        const base = parentStart[pi];
+        for (let j = 0; j < kk; j++) cellStart[p * kk + j] = base + j * cellDur;
+      }
       const levels = pickLevels(this.start, this.end, cellDur);
       const levelIds = levels.map((u) => fillUnitIds(u, cellDur, grid.cells, cellStart));
       const labelLevel = pickLabelLevelIndex(levels, this.start, this.end);
@@ -1416,8 +1671,10 @@
         fillUnitIds(u, cellDur, grid.cells, cellStart)
       );
       this.layout = { grid, g, levels, levelIds, labelLevel, cssWidth, cellStart, inherit };
-      this.tileW = cssWidth;
-      this.tileH = 0;
+      const keepW = this.tileW;
+      const keepH = this.tileH;
+      this.tileW = keepW > 0 ? keepW : cssWidth;
+      this.tileH = keepH > 0 ? keepH : 0;
       this._layoutCanvases();
       this._renderBounds();
       this._lastKey = "";
@@ -1431,135 +1688,120 @@
       }
     }
 
-    pickZoomWindow(now) {
-      // Packed Hilbert block around now that refines to ≤1s/cell.
-      // Target is budget / ZOOM_BUDGET_QUARTER. Row layout prefers a box whose
-      // aspect matches the parent map. If labels would be tiny, take a larger block.
-      if (!this.layout) return null;
-      const { grid, cellStart } = this.layout;
-      if (grid.cellDur <= INSET_MAX_D) return null; // already at inset resolution
-      if (!isZoomableDur(grid.cellDur)) return null;
+    enumerateZoomWindows(now) { // one window per n×n zoom level, tile containing now
+      if (!this.layout) return [];
+      const { grid } = this.layout;
+      const cssW = this.tileW || this.cssW;
+      this._zoomAspect = grid.w / grid.h;
+      const levels = zoomLevelNs(grid, cssW);
+      const out = [];
+      for (let t = 0; t < levels.length; t++) {
+        const L = levels[t];
+        const win = (now != null) ? this.placeZoomWindow(now, L.n, L.k) : null;
+        out.push(win || {
+          i0: 0, i1: L.area, start: this.start, end: this.end,
+          box: { x: 0, y: 0, w: L.w, h: L.h }, k: L.k, n: L.n,
+          area: L.area, D: L.D, px: 0, err: 0, flip: false
+        });
+      }
+      return out;
+    }
+
+    winFromBox(box, k, n) { // yellow box → inset window; packed range when the crop is a contiguous curve slice
+      const { grid, g, cellStart } = this.layout;
+      const at = g.at;
+      const idx = [];
+      for (let y = box.y; y < box.y + box.h; y++) {
+        for (let x = box.x; x < box.x + box.w; x++) {
+          const i = at[y * grid.w + x];
+          if (i >= 0 && i < grid.cells) idx.push(i);
+        }
+      }
+      if (!idx.length) return null;
+      idx.sort((a, b) => a - b);
+      let packed = idx.length === box.w * box.h;
+      if (packed) {
+        for (let i = 1; i < idx.length; i++) {
+          if (idx[i] !== idx[0] + i) { packed = false; break; }
+        }
+      }
+      const plan = insetPlanForBox(grid, box, this.tileW || this.cssW);
+      const kUse = (k >= 1) ? k : (plan && plan.k);
+      if (!(kUse >= 1)) return null;
+      const i0 = idx[0];
+      const i1 = packed ? idx[0] + idx.length : idx[idx.length - 1] + 1;
+      const win = {
+        i0, i1,
+        start: cellStart[i0],
+        end: cellStart[idx[idx.length - 1]] + grid.cellDur,
+        box, k: kUse, n: n || (this._zoomLock && this._zoomLock.n) || 0,
+        area: box.w * box.h,
+        D: plan ? plan.D : grid.cellDur / (kUse * kUse),
+        px: 0, err: 0, flip: false
+      };
+      if (!packed) win.idx = idx;
+      return win;
+    }
+
+    placeZoomWindow(now, n, k) { // the unique covering tile of the n×n grid that contains now
+      if (!this.layout || !(n >= 2)) return null;
+      const { grid, g } = this.layout;
       if (now < this.start || now >= this.end) return null;
       const nowIdx = clamp(Math.floor((now - this.start) / grid.cellDur), 0, grid.cells - 1);
-      const cap = maxCellsFor(this.cssW, grid.w / grid.h);
-      let budget = 0;
-      for (let i = 0; i < INSET_CELL_DURS.length; i++) {
-        const k = exactZoomK(grid.cellDur, INSET_CELL_DURS[i]);
-        if (k >= FACTOR_MIN) budget = Math.max(budget, Math.floor(cap / (k * k)));
-      }
-      const parentN = grid.w * grid.h;
-      const sliceCap = Math.max(ZOOM_MIN_AREA, Math.floor(parentN * ZOOM_PARENT_SHARE));
-      let target = Math.min(budget, sliceCap);
-      const quarter = Math.floor(target / ZOOM_BUDGET_QUARTER);
-      if (quarter >= ZOOM_MIN_AREA) target = quarter;
-      if (target < ZOOM_MIN_AREA) return null;
-      const collectLimit = Math.min(sliceCap, Math.max(target * ZOOM_BUDGET_QUARTER, budget * ZOOM_BUDGET_QUARTER, ZOOM_COLLECT_MIN));
-      const blocks = collectHilbertBlocks(grid.w, grid.h, nowIdx, collectLimit);
-      const tileW = this.tileW || this.cssW;
-      const tileH = this.tileH || this.cssH;
-      const matchAspect = zoomWantParentAspect();
-      const parentAspect = grid.w / grid.h;
-      const parentTall = parentAspect < 1 - GRID_ORIENT_EPS;
-      const parentWide = parentAspect > 1 + GRID_ORIENT_EPS;
-      let best = null;
-      let bestScore = -Infinity;
-      let flipped = null;
-      let flippedScore = -Infinity;
-      let fallback = null;
-      let fallbackPx = -1;
-      let fallbackErr = Infinity;
-      for (let b = 0; b < blocks.length; b++) {
-        const block = blocks[b];
-        const i0 = block.i0;
-        const i1 = Math.min(block.i1, grid.cells);
-        if (i1 - i0 < ZOOM_MIN_AREA) continue;
-        if (block.box.w * block.box.h !== i1 - i0) continue; // skip holed bounding boxes — inset must be a solid block
-        const zStart = cellStart[i0];
-        const zEnd = cellStart[i1 - 1] + grid.cellDur;
-        if ((zEnd - zStart) / (this.end - this.start) > ZOOM_RANGE_SHARE) continue; // zoom must stay a small slice of the range
-        const plan = pickInsetK(grid.cellDur, block.box.w, block.box.h, this.cssW);
-        if (!plan || plan.D > INSET_MAX_D) continue;
-        const win = { i0, i1, start: zStart, end: zEnd, box: block.box, k: plan.k };
-        const px = estimateInsetLabelPx(zStart, zEnd, block.box, plan.k, grid.cellDur, tileW, tileH);
-        const err = matchAspect ? zoomBoxAspectErr(block.box, parentAspect) : 0;
-        let score = block.area * ZOOM_AREA_SCORE - plan.D - err * ZOOM_ASPECT_WEIGHT;
-        if (block.area > target) score -= (block.area - target) * ZOOM_AREA_SCORE; // overshoot is allowed if aspect matches, but costs
-        const flip = matchAspect && (
-          (parentTall && block.box.w > block.box.h) ||
-          (parentWide && block.box.h > block.box.w)
-        );
-        if (px >= ZOOM_LABEL_MIN_PX) {
-          if (flip) {
-            if (score > flippedScore) {
-              flippedScore = score;
-              flipped = win;
-            }
-          } else if (score > bestScore) {
-            bestScore = score;
-            best = win;
-          }
-        } else if (px > fallbackPx || (px === fallbackPx && err < fallbackErr)) {
-          fallbackPx = px;
-          fallbackErr = err;
-          fallback = win;
-        }
-      }
-      return best || flipped || fallback;
+      const box = zoomTileAtCell(grid.w, grid.h, n, g.xs[nowIdx], g.ys[nowIdx]);
+      if (box.w < 1 || box.h < 1) return null;
+      const lock = this._zoomLock;
+      return this.winFromBox(box, k >= 1 ? k : (lock && lock.k), n);
     }
 
-    remapZoomRange(zStart, zEnd) {
-      // Same time window on a new parent grid. If that span is no longer a packed
-      // block, take the packed block whose times stay closest — do not maximize area.
+    pickZoomWindow(now) {
+      // n×n covering grid; stored area picks the zoom level (side ×2 steps).
       if (!this.layout) return null;
-      const { grid, cellStart } = this.layout;
-      if (grid.cellDur <= INSET_MAX_D) return null;
-      if (!isZoomableDur(grid.cellDur)) return null;
-      const i0 = clamp(Math.floor((zStart - this.start) / grid.cellDur), 0, grid.cells);
-      const i1 = clamp(Math.ceil((zEnd - this.start) / grid.cellDur), 0, grid.cells);
-      if (i1 - i0 >= ZOOM_MIN_AREA) {
-        const box = this.boundingBox(i0, i1);
-        const plan = box && box.w * box.h === i1 - i0
-          ? pickInsetK(grid.cellDur, box.w, box.h, this.cssW) : null;
-        if (plan && plan.D <= INSET_MAX_D) {
-          const tileW = this.tileW || this.cssW;
-          const tileH = this.tileH || this.cssH;
-          const px = estimateInsetLabelPx(zStart, zEnd, box, plan.k, grid.cellDur, tileW, tileH);
-          if (px < ZOOM_LABEL_MIN_PX) return null; // too fine — pickZoomWindow will coarsen
-          if (zoomWantParentAspect()) {
-            const pa = grid.w / grid.h;
-            const flip = (pa < 1 - GRID_ORIENT_EPS && box.w > box.h) ||
-              (pa > 1 + GRID_ORIENT_EPS && box.h > box.w);
-            if (flip) return null; // landscape window on a tall parent — re-pick
-          }
-          return { i0, i1, start: zStart, end: zEnd, box, k: plan.k };
-        }
-      }
-      const midIdx = clamp(Math.floor(((zStart + zEnd) / 2 - this.start) / grid.cellDur), 0, grid.cells - 1);
-      const parentN = grid.w * grid.h;
-      const blocks = collectHilbertBlocks(grid.w, grid.h, midIdx, Math.max(ZOOM_COLLECT_MIN, Math.floor(parentN * ZOOM_PARENT_SHARE)));
-      let best = null;
-      let bestDist = Infinity;
-      for (let b = 0; b < blocks.length; b++) {
-        const block = blocks[b];
-        const a = block.i0;
-        const c = Math.min(block.i1, grid.cells);
-        if (c - a < ZOOM_MIN_AREA) continue;
-        if (block.box.w * block.box.h !== c - a) continue;
-        const plan = pickInsetK(grid.cellDur, block.box.w, block.box.h, this.cssW);
-        if (!plan || plan.D > 1000) continue;
-        const bs = cellStart[a];
-        const be = cellStart[c - 1] + grid.cellDur;
-        const dist = Math.abs(bs - zStart) + Math.abs(be - zEnd);
-        if (dist < bestDist) {
-          bestDist = dist;
-          best = { i0: a, i1: c, start: bs, end: be, box: block.box, k: plan.k };
-        }
-      }
-      return best;
+      const { grid } = this.layout;
+      const cssW = this.tileW || this.cssW;
+      this._zoomAspect = grid.w / grid.h;
+      const levels = zoomLevelNs(grid, cssW);
+      if (!levels.length) return null;
+      const L = pickZoomLevel(levels, currentZoomArea());
+      if (!L) return null;
+      return this.placeZoomWindow(now, L.n, L.k);
     }
 
-    zoomContainsNow(now) { // true while now still sits in the yellow-box interval
-      return !!(this.zoomRange && now >= this.zoomRange.start && now < this.zoomRange.end);
+    remapZoomRange() { // new parent grid: keep zoom n, snap to the covering tile at now
+      if (!this.layout) return null;
+      const lock = this._zoomLock;
+      const { grid } = this.layout;
+      const cssW = this.tileW || this.cssW;
+      const levels = zoomLevelNs(grid, cssW);
+      let L = pickZoomLevel(levels, currentZoomArea());
+      if (lock && lock.n >= 2) {
+        for (let i = 0; i < levels.length; i++) {
+          if (levels[i].n === lock.n) { L = levels[i]; break; }
+        }
+      }
+      if (!L) return null;
+      const k = (lock && lock.k >= 1 && lock.n === L.n) ? lock.k : L.k;
+      return this.placeZoomWindow(nowMs(), L.n, k);
+    }
+
+    zoomContainsNow(now) { // true while now's parent cell still sits in this covering tile
+      if (!this.zoomBox || !this.layout) return false;
+      const { grid, g } = this.layout;
+      if (now < this.start || now >= this.end) return false;
+      const nowIdx = clamp(Math.floor((now - this.start) / grid.cellDur), 0, grid.cells - 1);
+      return boxContainsCell(this.zoomBox, g, nowIdx);
+    }
+
+    slideZoomWindow(now) { // same n×n grid: next covering tile along the curve (the one now sits in)
+      const lock = this._zoomLock;
+      if (!lock || !this.layout || !(lock.n >= 2)) return null;
+      return this.placeZoomWindow(now, lock.n, lock.k);
+    }
+
+    lockedZoomWin() { // reconstruct the current locked window while now is still inside it
+      const lock = this._zoomLock;
+      if (!lock || !this.zoomBox || !this.layout) return null;
+      return this.winFromBox(this.zoomBox, lock.k, lock.n);
     }
 
     _layoutCanvases() { // size four layers; hl is padded for the outside yellow frame
@@ -1571,12 +1813,18 @@
       this.cssH = cssHeight;
       if (!(this.tileW > 0)) this.tileW = cssWidth;
       if (!(this.tileH > 0)) this.tileH = cssHeight;
-      this.wrap.style.width = cssWidth + "px";
-      this.wrap.style.height = cssHeight + "px";
+      const frameW = this.tileW;
+      const frameH = this.tileH;
+      const ox = Math.round((frameW - cssWidth) / 2);
+      const oy = Math.round((frameH - cssHeight) / 2);
+      this.wrap.style.width = frameW + "px";
+      this.wrap.style.height = frameH + "px";
       this.base.width = grid.w;
       this.base.height = grid.h;
       this.base.style.width = cssWidth + "px";
       this.base.style.height = cssHeight + "px";
+      this.base.style.left = ox + "px";
+      this.base.style.top = oy + "px";
       const dpr = Math.min(DPR_MAX, window.devicePixelRatio || 1);
       this.dpr = dpr;
       this.hlPad = HL_PAD_PX; // yellow frame is drawn outside the pixels; hl canvas is padded so Fit does not clip it
@@ -1585,16 +1833,16 @@
         c.height = Math.round(cssHeight * dpr);
         c.style.width = cssWidth + "px";
         c.style.height = cssHeight + "px";
-        c.style.left = "0";
-        c.style.top = "0";
+        c.style.left = ox + "px";
+        c.style.top = oy + "px";
       }
       const pad = this.hlPad;
       this.hl.width = Math.round((cssWidth + pad * 2) * dpr);
       this.hl.height = Math.round((cssHeight + pad * 2) * dpr);
       this.hl.style.width = (cssWidth + pad * 2) + "px";
       this.hl.style.height = (cssHeight + pad * 2) + "px";
-      this.hl.style.left = -pad + "px";
-      this.hl.style.top = -pad + "px";
+      this.hl.style.left = (ox - pad) + "px";
+      this.hl.style.top = (oy - pad) + "px";
       this.ctxBounds.setTransform(dpr, 0, 0, dpr, 0, 0);
       this.ctxLabels.setTransform(dpr, 0, 0, dpr, 0, 0);
       this.ctxHl.setTransform(dpr, 0, 0, dpr, pad * dpr, pad * dpr);
@@ -1611,16 +1859,9 @@
       if (!this.layout || !(tileW > MIN_CSS_PX) || !(tileH > MIN_CSS_PX)) return;
       tileW = Math.max(MIN_CSS_PX, Math.round(tileW));
       tileH = Math.max(MIN_CSS_PX, Math.round(tileH));
-      const aspect = this.layout.grid.w / this.layout.grid.h;
-      let cssWidth;
-      let cssHeight;
-      if (tileW / tileH > aspect) {
-        cssHeight = tileH;
-        cssWidth = Math.max(MIN_CSS_PX, Math.round(tileH * aspect));
-      } else {
-        cssWidth = tileW;
-        cssHeight = Math.max(MIN_CSS_PX, Math.round(tileW / aspect));
-      }
+      const box = letterboxIn(this.layout.grid.w / this.layout.grid.h, tileW, tileH);
+      const cssWidth = box.w;
+      const cssHeight = box.h;
       if (this.tileW === tileW && this.tileH === tileH &&
           this.cssW === cssWidth && this.cssH === cssHeight &&
           this.layout.cssWidth === cssWidth && this.layout.cssHeight === cssHeight) return;
@@ -1662,7 +1903,8 @@
     tick(now, force) { // fill along the curve up to now; tint the current coarsest unit; redraw labels
       if (!this.layout) return;
       const { grid, g, levels, levelIds, cellStart } = this.layout;
-      const nowKey = Math.floor(now / Math.max(1, grid.cellDur));
+      const paintMs = Math.max(1, Math.min(LOOP_MAX_MS, grid.cellDur)); // inset: at least 1 Hz, no whole-second snap
+      const nowKey = Math.floor(now / paintMs);
       let curId = null;
       if (levels[0] && now >= this.start && now < this.end) curId = levels[0].index(now);
       const key = nowKey + ":" + curId;
@@ -1840,8 +2082,7 @@
       return [...groups.values()];
     }
 
-    _renderLabels(now) { // one font; short glyphs sit in the square nearest the (half-)centroid; live uses the larger half
-      // One size for all labels. Text shorter than 4 chars uses the largest square in the segment.
+    _renderLabels(now) { // layer-wide slot (square / 4×3 / 16×9); one font except a single small outlier
       const ctx = this.ctxLabels;
       ctx.clearRect(0, 0, this.cssW, this.cssH);
       const { grid, g, levels, labelLevel, cellStart } = this.layout;
@@ -1854,12 +2095,14 @@
       const cw = this.cssW / grid.w;
       const ch = this.cssH / grid.h;
       const dur = grid.cellDur;
-      const items = [];
+      const pending = [];
+      const texts = [];
 
       for (let r = 0; r < regions.length; r++) {
         const region = regions[r];
         const t = cellStart[region.idx[0]] + dur * 0.5;
         const text = unit.label(t);
+        texts.push(text);
         const bw = region.maxx - region.minx + 1;
         const bh = region.maxy - region.miny + 1;
         const full = new Uint8Array(bw * bh);
@@ -1886,7 +2129,6 @@
         let onFilled = tMax <= now;
         let placeMask = full;
         if (live) {
-          // Live unit: sit in the larger half (filled vs empty), never on the head cell.
           if (nPast >= nFuture && nPast > 0) {
             placeMask = past;
             onFilled = true;
@@ -1895,82 +2137,103 @@
             onFilled = false;
           }
         }
-        const short = text.length <= LABEL_SHORT_LEN; // 00–23, 1st–31st: inscribe in the filled square nearest the centroid — never outside the block
-        const tight = !short && (unit.id === "hour" || unit.id === "minute" || unit.id === "second");
-        const liveSlot = Math.floor(now / LABEL_LIVE_MS);
+        pending.push({
+          text,
+          n: region.idx.length,
+          live,
+          onFilled,
+          placeMask,
+          bw,
+          bh,
+          ox: region.minx,
+          oy: region.miny,
+          color: labelColor(onFilled, live)
+        });
+      }
+
+      const kind = labelSlotKind(texts);
+      const liveSlot = Math.floor(now / LABEL_LIVE_MS);
+      const items = [];
+      for (let r = 0; r < pending.length; r++) {
+        const p = pending[r];
         const cached = this._liveLabel;
-        if (live && cached && cached.slot === liveSlot && cached.text === text &&
-            cached.ox === region.minx && cached.oy === region.miny &&
-            cached.onFilled === onFilled) {
+        if (p.live && cached && cached.slot === liveSlot && cached.text === p.text &&
+            cached.ox === p.ox && cached.oy === p.oy &&
+            cached.onFilled === p.onFilled && cached.kind === kind) {
           items.push({
-            text,
-            n: region.idx.length,
-            color: labelColor(onFilled, live),
-            fit: cached.fit,
+            text: p.text,
+            n: p.n,
+            color: p.color,
             place: cached.place,
             ox: cached.ox,
             oy: cached.oy
           });
           continue;
         }
-        const packed = largestRectangle(full, bw, bh);
-        const placed = largestRectangle(placeMask, bw, bh);
-        const maxSq = packed.maxSquare && packed.maxSquare.area ? packed.maxSquare : packed.max;
-        const srcMax = placeMask === full
-          ? maxSq
-          : (placed.maxSquare && placed.maxSquare.area ? placed.maxSquare : placed.max);
-        const mid = maskCentroid(placeMask, bw, bh);
-        let placeSq = short
-          ? (nearestFilledSquare(placeMask, bw, bh, mid.x, mid.y, srcMax.w || 1) ||
-            (placed.max.area ? centerSquareInRect(placed.max, srcMax.w || 1) : srcMax))
-          : srcMax;
-        if (short && placeSq && placeSq.w > LABEL_SQUARE_INSET * 2) {
-          const inset = LABEL_SQUARE_INSET;
-          placeSq = { // 1-cell inset so glyphs do not kiss the day boundary
-            x: placeSq.x + inset, y: placeSq.y + inset,
-            w: placeSq.w - inset * 2, h: placeSq.h - inset * 2,
-            area: (placeSq.w - inset * 2) * (placeSq.h - inset * 2)
+        const mid = maskCentroid(p.placeMask, p.bw, p.bh);
+        const place = largestSlotInMask(p.placeMask, p.bw, p.bh, kind, mid.x, mid.y);
+        const item = {
+          text: p.text,
+          n: p.n,
+          color: p.color,
+          place,
+          ox: p.ox,
+          oy: p.oy
+        };
+        if (p.live) {
+          this._liveLabel = {
+            slot: liveSlot, text: p.text, place, ox: p.ox, oy: p.oy,
+            onFilled: p.onFilled, kind
           };
         }
-        const item = {
-          text,
-          n: region.idx.length,
-          color: labelColor(onFilled, live),
-          fit: short ? maxSq : (tight ? packed.square : packed.max), // shared font from the whole block
-          place: short
-            ? (placeSq && placeSq.area ? placeSq : maxSq)
-            : (tight ? (placed.square.area ? placed.square : placed.max) : (placed.max.area ? placed.max : packed.max)),
-          ox: region.minx,
-          oy: region.miny
-        };
-        if (live) this._liveLabel = { slot: liveSlot, text, fit: item.fit, place: item.place, ox: item.ox, oy: item.oy, onFilled };
         items.push(item);
       }
 
       const med = median(items.map((it) => it.n));
-      let fontSize = Infinity;
+      const scored = [];
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
-        const box = it.text.length <= LABEL_SHORT_LEN
-          ? (it.fit.area ? it.fit : it.place)
-          : (it.place.area ? it.place : it.fit);
-        if (!box.area || it.n < med * LABEL_TINY_FRAC) continue;
-        const size = fontFit(ctx, it.text, box.w * cw, box.h * ch,
-          it.text.length <= LABEL_SHORT_LEN ? LABEL_SHORT_FILL : labelFillFrac(unit.id));
-        if (size < fontSize) fontSize = size;
+        const pr = it.place;
+        if (!pr || !pr.area || it.n < med * LABEL_TINY_FRAC) continue;
+        scored.push({
+          i,
+          score: Math.min(pr.w * cw, pr.h * ch),
+          px: fontFit(ctx, it.text, pr.w * cw, pr.h * ch)
+        });
       }
-      if (!isFinite(fontSize)) fontSize = LABEL_FALLBACK_PX;
+      scored.sort((a, b) => a.score - b.score);
+      let outlierI = -1;
+      if (scored.length >= 2 && scored[0].score < LABEL_OUTLIER_RATIO * scored[1].score) {
+        outlierI = scored[0].i;
+      }
+      let fontSize = Infinity;
+      let outlierPx = LABEL_FALLBACK_PX;
+      for (let s = 0; s < scored.length; s++) {
+        if (scored[s].i === outlierI) {
+          outlierPx = scored[s].px;
+          continue;
+        }
+        if (scored[s].px < fontSize) fontSize = scored[s].px;
+      }
+      if (!isFinite(fontSize)) fontSize = scored.length ? scored[0].px : LABEL_FALLBACK_PX;
       fontSize = Math.min(fontSize, LABEL_MAX_PX);
+      outlierPx = Math.min(outlierPx, LABEL_MAX_PX);
 
-      ctx.font = LABEL_FONT + fontSize + LABEL_FONT_STACK;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
+      let lastPx = -1;
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
-        const pr = it.place.area ? it.place : it.fit;
-        if (!pr.area) continue;
+        const pr = it.place;
+        if (!pr || !pr.area) continue;
+        if (it.n < med * LABEL_TINY_FRAC) continue;
+        const px = i === outlierI ? outlierPx : fontSize;
+        if (px !== lastPx) {
+          ctx.font = LABEL_FONT + px + LABEL_FONT_STACK;
+          lastPx = px;
+        }
         const tw = ctx.measureText(it.text).width;
-        if (tw > pr.w * cw * LABEL_FIT_PAD || fontSize > pr.h * ch * LABEL_FIT_PAD) continue; // stay inside the square, hence inside the block
+        if (tw > pr.w * cw * LABEL_FIT_PAD || px > pr.h * ch * LABEL_FIT_PAD) continue;
         ctx.fillStyle = it.color;
         ctx.fillText(it.text, (it.ox + pr.x + pr.w / 2) * cw, (it.oy + pr.y + pr.h / 2) * ch);
       }
@@ -1979,6 +2242,7 @@
     setZoomHighlight(box, range) { // yellow box on the parent; range is the inset interval
       this.zoomBox = box;
       this.zoomRange = range || null;
+      if (!box && !this.zoomRange) this._zoomLock = null;
       if (!this.layout) return;
       const now = nowMs();
       const curId = this.layout.levels[0] && now >= this.start && now < this.end
@@ -2009,7 +2273,7 @@
     _momentAt(clientX, clientY) { // cell under the cursor → local instant; surplus / off-map → null
       if (!this.layout) return null;
       const { grid, g, cellStart } = this.layout;
-      const r = this.wrap.getBoundingClientRect();
+      const r = this.base.getBoundingClientRect();
       if (!(r.width > 0) || !(r.height > 0)) return null;
       const gx = Math.floor((clientX - r.left) / r.width * grid.w);
       const gy = Math.floor((clientY - r.top) / r.height * grid.h);
@@ -2066,16 +2330,23 @@
   let lastZoomKey = "";
   let lastNavStamp = ""; // day+month+year of the preset labels — retitle 30th / August / 2026 at midnight
   let chromeHidden = false; // F toggles the top bar; never written to localStorage
-  const FRAME_KEY = "clock-hilbert-frame"; // localStorage: last preset + Custom dates
+  let zoomSizeByMode = { today: 0, month: 0, year: 0, epoch: 0, arbitrary: 0 }; // parent-cell area per preset; 0 = automatic
+  let zoomInBtn = null;
+  let zoomOutBtn = null;
+  const FRAME_KEY = "clock-hilbert-frame"; // localStorage: last preset + Custom dates + zoom per mode
+
+  function currentZoomArea() { // stored yellow-box area for the active preset
+    return zoomSizeByMode[mode] || 0;
+  }
 
   function applyLayoutClass() { // Fit is the only layout; class drives the CSS lock
     document.documentElement.classList.add("fit-mode");
     document.body.classList.add("fit-mode");
   }
 
-  function saveFrame() { // last preset + Custom dates
+  function saveFrame() { // last preset + Custom dates + zoom area per mode
     try {
-      const data = { mode: mode, layout: "fit" };
+      const data = { mode: mode, layout: "fit", zoom: zoomSizeByMode };
       if (arbitrary && Number.isFinite(arbitrary.start) && Number.isFinite(arbitrary.end) && arbitrary.end > arbitrary.start) {
         data.arbitrary = { start: arbitrary.start, end: arbitrary.end };
       }
@@ -2092,6 +2363,13 @@
       }
       if (data.mode === "today" || data.mode === "month" || data.mode === "year" || data.mode === "epoch" || data.mode === "arbitrary") {
         if (data.mode !== "arbitrary" || arbitrary) mode = data.mode;
+      }
+      if (data.zoom && typeof data.zoom === "object") {
+        const ids = ["today", "month", "year", "epoch", "arbitrary"];
+        for (let i = 0; i < ids.length; i++) {
+          const n = +data.zoom[ids[i]];
+          if (Number.isFinite(n) && n >= 0) zoomSizeByMode[ids[i]] = n;
+        }
       }
     } catch (err) {}
   }
@@ -2129,7 +2407,7 @@
     return { start: startOfDay(d), end: new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime() };
   }
 
-  function renderPresetBar() { // D / M / Y / Unix / Custom
+  function renderPresetBar() { // D / M / Y / Unix / Range, then + / −
     lastNavStamp = navStamp(nowMs());
     presetBar.innerHTML = "";
     currentPresets().forEach((p) => {
@@ -2140,6 +2418,22 @@
       b.addEventListener("click", () => setMode(p.id));
       presetBar.appendChild(b);
     });
+    const zoomWrap = document.createElement("div");
+    zoomWrap.className = "zoom-btns";
+    zoomInBtn = document.createElement("button");
+    zoomInBtn.type = "button";
+    zoomInBtn.innerHTML = "&plus;";
+    zoomInBtn.setAttribute("aria-label", "Zoom in");
+    zoomInBtn.addEventListener("click", () => nudgeZoomSize(-1));
+    zoomOutBtn = document.createElement("button");
+    zoomOutBtn.type = "button";
+    zoomOutBtn.innerHTML = "&minus;";
+    zoomOutBtn.setAttribute("aria-label", "Zoom out");
+    zoomOutBtn.addEventListener("click", () => nudgeZoomSize(1));
+    zoomWrap.appendChild(zoomInBtn);
+    zoomWrap.appendChild(zoomOutBtn);
+    presetBar.appendChild(zoomWrap);
+    syncZoomButtons();
   }
 
   function setMode(id) { // cancel a pending Custom edit, then rebuild
@@ -2245,13 +2539,26 @@
     return { width, aspect: slotAspect(width, availH), availH: availH };
   }
 
+  function insetDismissible(main) { // parent already ≤1s: zoom out may hide the second panel
+    return !!(main && main.layout && main.layout.grid.cellDur <= INSET_MAX_D);
+  }
+
+  function insetSlotOn() { // second tile is visible
+    return !!(slots[1] && slots[1].block.style.display !== "none");
+  }
+
   function zoomChainKey(now) { // detect when the inset window must move
     const main = slots[0] && slots[0].map;
     if (!main || !main.layout) return "";
-    if (main.layout.grid.cellDur <= INSET_MAX_D) return "none";
-    if (!main.zoomRange) return "need";
-    if (!main.zoomContainsNow(now)) return "moved";
-    return main.zoomRange.start + "-" + main.zoomRange.end;
+    if (insetDismissible(main) && currentZoomArea() <= 0) return "none"; // day default: one panel
+    if (!main.zoomRange) return listZoomLadder(now).uniq.length ? "need" : "none";
+    if (!main.zoomContainsNow(now)) {
+      const dur = main.layout.grid.cellDur;
+      const idx = clamp(Math.floor((now - main.start) / dur), 0, main.layout.grid.cells - 1);
+      return "moved:" + idx; // retry each parent cell until the locked box can follow
+    }
+    const b = main.zoomBox;
+    return b ? ("box:" + b.x + "," + b.y + "," + b.w + "x" + b.h) : (main.zoomRange.start + "-" + main.zoomRange.end);
   }
 
   function chromeHeight() { // top bar + caption slack when the stage box is unknown
@@ -2289,6 +2596,18 @@
     return Math.max(CAPTION_MIN, Math.ceil(el.getBoundingClientRect().height) + CAPTION_PAD);
   }
 
+  function stageEdgeX() { // horizontal padding from a map to the window edge (body + stage)
+    const body = getComputedStyle(document.body);
+    const st = getComputedStyle(stage);
+    const bodyX = Math.max(parseFloat(body.paddingLeft) || 0, parseFloat(body.paddingRight) || 0);
+    const stageX = Math.max(parseFloat(st.paddingLeft) || 0, parseFloat(st.paddingRight) || 0, FIT_PAD);
+    return bodyX + stageX;
+  }
+
+  function rowStackGap() { // between row tiles; >= stage edge, plus frames so they do not overlap
+    return stageEdgeX() + STACK_ROW_FRAME;
+  }
+
   function packFit(availW, availH) { // equal tiles; row vs column = more map area
     const vis = fitSlots();
     const n = vis.length;
@@ -2297,6 +2616,7 @@
     const capMax = Math.max.apply(null, caps);
     const capSum = caps.reduce((a, b) => a + b, 0);
     const colGap = n > 1 ? STACK_COL_GAP : 0;
+    const rowGap = n > 1 ? rowStackGap() : 0;
 
     if (n === 1) {
       const r = vis[0].map.layout.grid.h / vis[0].map.layout.grid.w;
@@ -2306,7 +2626,7 @@
 
     const colW = Math.max(TILE_MIN, Math.floor(availW));
     const colH = Math.max(TILE_MIN, Math.floor((availH - capSum - colGap) / n));
-    const rowW = Math.max(TILE_MIN, Math.floor(availW / n)); // each tile is one half; CSS centers the letterboxed block in it
+    const rowW = Math.max(TILE_MIN, Math.floor((availW - rowGap) / n)); // half after the center gutter
     const rowH = Math.max(TILE_MIN, Math.floor(availH - capMax));
     const col = {
       dir: "col",
@@ -2324,12 +2644,10 @@
     return row.area > col.area ? row : col;
   }
 
-  function applySlotBox(slot, tileW, tileH) { // Fit budget is tileW×tileH; the block hugs the letterboxed map so the caption sits under it
+  function applySlotBox(slot, tileW, tileH) { // Fit budget is tileW×tileH; row inset wrap matches the parent tile
     slot.map.setDisplaySize(tileW, tileH);
-    const mw = Math.max(TILE_MIN, slot.map.cssW || tileW);
-    const mh = Math.max(TILE_MIN, slot.map.cssH || tileH);
-    slot.block.style.width = mw + "px";
-    slot.block.style.height = (mh + captionExtra(slot)) + "px";
+    slot.block.style.width = tileW + "px";
+    slot.block.style.height = (tileH + captionExtra(slot)) + "px";
   }
 
   function clearSlotBoxes() { // Today one-panel: let the map size itself, do not lock Fit tiles
@@ -2343,6 +2661,7 @@
     stackEl.classList.toggle("fit-row", pack.dir === "row");
     stackEl.classList.toggle("fit-col", pack.dir !== "row");
     const vis = fitSlots();
+    stackEl.style.setProperty("--stack-row-gap", pack.dir === "row" && vis.length > 1 ? rowStackGap() + "px" : "0px");
     const w = Math.max(TILE_MIN, Math.round(pack.widths[0]));
     const h = Math.max(TILE_MIN, Math.round(pack.heights[0]));
     if (rebuildGrids && vis[0]) {
@@ -2375,28 +2694,22 @@
     main.setRange(range.start, range.end);
     lastZoomKey = "";
     stackEl.classList.remove("fit-row", "fit-col");
+    stackEl.style.setProperty("--stack-row-gap", "0px");
 
     if (mode === "today") {
       rebuildNatural(main);
-      if (pageIsPortrait()) {
-        // Phone upright: one tall day. A second panel would pack landscape tiles and flatten the grid.
-        hideSlotsFrom(1);
-        main.setZoomHighlight(null);
-        lastZoomKey = "none";
-        clearSlotBoxes();
-        enforceFitInStage();
-        return;
-      }
       updateZoom(now, true);
       if (fitSlots().length < 2) { // one panel: do not rebuild into Fit tiles
         clearSlotBoxes();
         enforceFitInStage();
+        syncZoomButtons();
         return;
       }
     } else {
       const box = availBox();
       const wide = !pageIsPortrait() && box.w >= box.h * WIDE_STAGE_RATIO;
-      const probeW = wide ? Math.max(STAGE_MIN_W, Math.floor(box.w / 2)) : Math.max(STAGE_MIN_W, box.w);
+      const rowGap = wide ? rowStackGap() : 0;
+      const probeW = wide ? Math.max(STAGE_MIN_W, Math.floor((box.w - rowGap) / 2)) : Math.max(STAGE_MIN_W, box.w);
       const probeH = wide ? Math.max(AVAIL_H_MIN, box.h - STAGE_GUTTER) : Math.max(AVAIL_H_MIN, Math.floor((box.h - PROBE_ROW_CAP) / 2));
       main.rebuild(probeW, clamp(probeW / probeH, ASPECT_MIN, ASPECT_MAX));
       updateZoom(now, true, probeW);
@@ -2412,6 +2725,8 @@
       if (same) break;
     }
     enforceFitInStage();
+    enforceRowGap();
+    syncZoomButtons();
   }
 
   function fitPaintBounds() { // union of map + highlight + caption, for overflow shrink
@@ -2457,12 +2772,57 @@
     if (!overflow) return;
     const s = Math.min(innerW / contentW, innerH / contentH) * FIT_SHRINK;
     if (!(s < FIT_SHRINK_EPS) || s <= 0) return;
+    const tw = vis[0].map.tileW || vis[0].map.cssW;
+    const th = vis[0].map.tileH || vis[0].map.cssH;
     for (let i = 0; i < vis.length; i++) {
-      const tw = vis[i].map.tileW || vis[i].map.cssW;
-      const th = vis[i].map.tileH || vis[i].map.cssH;
       applySlotBox(vis[i], Math.max(TILE_MIN, Math.floor(tw * s)), Math.max(TILE_MIN, Math.floor(th * s)));
     }
     requestAnimationFrame(drawAllConnectors);
+  }
+
+  function panelPaintX(slot) { // painted left/right of the map, including yellow outline / hl pad
+    const wrap = slot.map.wrap.getBoundingClientRect();
+    let left = wrap.left;
+    let right = wrap.right;
+    if (slot.map.wrap.classList.contains("map-zoom")) {
+      left -= INSET_FRAME_OUT;
+      right += INSET_FRAME_OUT;
+    }
+    const hl = slot.map.hl;
+    if (hl) {
+      const r = hl.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        left = Math.min(left, r.left);
+        right = Math.max(right, r.right);
+      }
+    }
+    return { left: left, right: right };
+  }
+
+  function enforceRowGap() { // row: gap between maps ≥ each map's margin to the window edge
+    if (!stackEl.classList.contains("fit-row")) return;
+    const vis = fitSlots();
+    if (vis.length < 2) return;
+    const vw = document.documentElement.clientWidth;
+    let shrunk = false;
+    for (let k = 0; k < 4; k++) {
+      const xs = vis.map(panelPaintX);
+      xs.sort((a, b) => a.left - b.left);
+      const gap = xs[1].left - xs[0].right;
+      const side = Math.min(xs[0].left, vw - xs[1].right);
+      if (gap + OVERFLOW_SLACK >= side) {
+        if (shrunk) requestAnimationFrame(drawAllConnectors);
+        return;
+      }
+      shrunk = true;
+      const s = FIT_SHRINK;
+      const tw = vis[0].map.tileW || vis[0].map.cssW;
+      const th = vis[0].map.tileH || vis[0].map.cssH;
+      for (let i = 0; i < vis.length; i++) {
+        applySlotBox(vis[i], Math.max(TILE_MIN, Math.floor(tw * s)), Math.max(TILE_MIN, Math.floor(th * s)));
+      }
+    }
+    if (shrunk) requestAnimationFrame(drawAllConnectors);
   }
 
   function visWidthClose(pack) { // pack matches current tiles within PACK_CLOSE_PX
@@ -2490,44 +2850,176 @@
     }, RESIZE_DEBOUNCE_MS);
   }
 
-  function updateZoom(now, force, insetCssWidth) { // one inset; hide it when the parent cell is already ≤1s
+  function updateZoom(now, force, insetCssWidth, forcedWin) { // one inset; parent ≤1s stays one panel until +
     const main = slots[0] && slots[0].map;
     if (!main || !main.layout) return;
-    const minute = Math.floor(now / MS_MIN);
-    let win = null;
-    if (!force && main.zoomRange && now >= main.zoomRange.start && now < main.zoomRange.end && main._zoomMinute === minute) {
-      win = main.remapZoomRange(main.zoomRange.start, main.zoomRange.end);
+    if (!forcedWin && insetDismissible(main) && currentZoomArea() <= 0) {
+      main.setZoomHighlight(null);
+      hideSlotsFrom(1);
+      lastZoomKey = "none";
+      requestAnimationFrame(drawAllConnectors);
+      syncZoomButtons();
+      return;
     }
+    const minute = Math.floor(now / MS_MIN);
+    let win = forcedWin || null;
+    if (!win && !force && main._zoomLock && main.zoomContainsNow(now)) {
+      win = main.lockedZoomWin();
+    }
+    if (!win && !force && main._zoomLock) win = main.slideZoomWindow(now);
     if (!win) {
       win = main.pickZoomWindow(now);
-      if (win) main._zoomMinute = minute;
+      if (!force && win && main._zoomLock && win.n !== main._zoomLock.n) {
+        win = main.slideZoomWindow(now) || win;
+      }
+    }
+    if (!win && main._zoomLock && main.zoomContainsNow(now)) win = main.lockedZoomWin();
+    if (win) {
+      main._zoomLock = { n: win.n, w: win.box.w, h: win.box.h, k: win.k, cssW: main.cssW };
+      main._zoomMinute = minute;
     }
     if (!win) {
       main.setZoomHighlight(null);
       hideSlotsFrom(1);
       lastZoomKey = "none";
       requestAnimationFrame(drawAllConnectors);
+      syncZoomButtons();
       return;
     }
     const cssW = Math.max(TILE_MIN, Math.round(insetCssWidth || main.cssW));
-    const rangeKey = win.start + "-" + win.end;
-    const layoutKey = rangeKey + ":" + win.box.w + "x" + win.box.h + "k" + win.k + "@" + cssW;
+    const layoutKey = (win.n || 0) + ":" + win.box.x + "," + win.box.y + ":" + win.box.w + "x" + win.box.h + "k" + win.k + "@" + cssW;
     main.setZoomHighlight(win.box, { start: win.start, end: win.end });
     const inset = ensureSlot(1).map;
+    main._zoomAspect = main.layout.grid.w / main.layout.grid.h;
+    if (main.tileW > MIN_CSS_PX && main.tileH > MIN_CSS_PX) {
+      inset.tileW = main.tileW;
+      inset.tileH = main.tileH;
+    }
     if (force || inset._cropKey !== layoutKey) {
       inset.rebuildZoom(cssW, main.layout, win);
       inset._cropKey = layoutKey;
-    } else if (Math.abs(inset.cssW - cssW) > 1) {
-      inset.setDisplayWidth(cssW);
     }
     hideSlotsFrom(2);
-    lastZoomKey = rangeKey;
-    if (main.tileW > MIN_CSS_PX && main.tileH > MIN_CSS_PX && fitSlots().length > 1) {
+    lastZoomKey = zoomChainKey(now);
+    if (main.tileW > MIN_CSS_PX && main.tileH > MIN_CSS_PX) {
       applySlotBox(slots[1], main.tileW, main.tileH);
     } else {
       inset.setDisplayWidth(main.cssW);
     }
     requestAnimationFrame(drawAllConnectors);
+    syncZoomButtons();
+  }
+
+  function zoomWinKey(win) { // identity of a yellow-box window
+    return win.start + "-" + win.end + ":" + win.box.w + "x" + win.box.h;
+  }
+
+  function listZoomLadder(now) { // n×n levels, small tiles→large; idx is the current covering tile
+    const main = slots[0] && slots[0].map;
+    if (!main || !main.layout) return { uniq: [], idx: -1 };
+    const { grid } = main.layout;
+    const cssW = main.tileW || main.cssW;
+    const levels = zoomLevelNs(grid, cssW);
+    const uniq = [];
+    for (let t = 0; t < levels.length; t++) {
+      const L = levels[t];
+      uniq.push({
+        box: { x: 0, y: 0, w: L.w, h: L.h },
+        area: L.area,
+        k: L.k,
+        n: L.n,
+        start: 0,
+        end: 0
+      });
+    }
+    uniq.sort((a, b) => a.area - b.area);
+    let idx = -1;
+    if (main._zoomLock && main._zoomLock.n >= 2) {
+      for (let i = 0; i < uniq.length; i++) {
+        if (uniq[i].n === main._zoomLock.n) { idx = i; break; }
+      }
+    }
+    if (idx < 0 && main.zoomBox) {
+      const area = main.zoomBox.w * main.zoomBox.h;
+      for (let i = 0; i < uniq.length; i++) {
+        if (Math.abs(uniq[i].area - area) <= uniq[i].n) { idx = i; break; }
+      }
+      if (idx < 0) {
+        for (let i = 0; i < uniq.length; i++) {
+          if (uniq[i].area >= area) { idx = i; break; }
+        }
+      }
+    }
+    if (idx < 0 && currentZoomArea() > 0) {
+      const want = currentZoomArea();
+      let best = Infinity;
+      for (let i = 0; i < uniq.length; i++) {
+        const d = Math.abs(uniq[i].area - want);
+        if (d < best) { best = d; idx = i; }
+      }
+    }
+    return { uniq: uniq, idx: idx };
+  }
+
+  function syncZoomButtons() { // disable +/− when that step does not exist
+    if (!zoomInBtn || !zoomOutBtn) return;
+    const main = slots[0] && slots[0].map;
+    const lad = listZoomLadder(nowMs());
+    const n = lad.uniq.length;
+    const dismiss = insetDismissible(main);
+    const on = !!(main && main.zoomRange && insetSlotOn());
+    if (dismiss && !on) {
+      zoomInBtn.disabled = n < 1;
+      zoomOutBtn.disabled = true;
+      return;
+    }
+    const idx = lad.idx < 0 ? 0 : lad.idx;
+    zoomInBtn.disabled = n < 1 || idx <= 0;
+    zoomOutBtn.disabled = dismiss ? false : (n < 2 || idx >= n - 1);
+  }
+
+  function hideFineInset() { // parent ≤1s: − past the coarsest window drops the second panel
+    zoomSizeByMode[mode] = 0;
+    saveFrame();
+    const main = slots[0] && slots[0].map;
+    if (main) main.setZoomHighlight(null);
+    hideSlotsFrom(1);
+    lastZoomKey = "none";
+    relayout();
+  }
+
+  function nudgeZoomSize(dir) { // +1 larger yellow box, −1 smaller; + / ↑ send −1
+    const main = slots[0] && slots[0].map;
+    if (!main || !main.layout) return;
+    const now = nowMs();
+    const lad = listZoomLadder(now);
+    const dismiss = insetDismissible(main);
+    const on = !!(main.zoomRange && insetSlotOn());
+    if (dismiss && !on) {
+      if (dir >= 0 || !lad.uniq.length) return;
+      zoomSizeByMode[mode] = 1e15; // coarsest after relayout — clamp to sliceCap on the new grid
+      saveFrame();
+      relayout();
+      return;
+    }
+    if (!lad.uniq.length) {
+      if (dismiss && on && dir > 0) hideFineInset();
+      return;
+    }
+    let idx = lad.idx;
+    if (idx < 0) idx = on ? lad.uniq.length - 1 : 0;
+    const next = idx + dir;
+    if (next >= lad.uniq.length && dismiss && dir > 0) {
+      hideFineInset();
+      return;
+    }
+    if (next < 0 || next >= lad.uniq.length) return;
+    const win = lad.uniq[next];
+    zoomSizeByMode[mode] = win.area;
+    saveFrame();
+    main._zoomLock = null; // new zoom level — size may change; placeZoomWindow re-locks
+    main._zoomMinute = Math.floor(now / MS_MIN);
+    updateZoom(now, true);
   }
 
   function drawAllConnectors() { // two leaders: outer yellow frame → outer inset frame
@@ -2546,12 +3038,12 @@
       const box = a.map.zoomBox;
       if (!box || !a.map.layout) continue;
       const grid = a.map.layout.grid;
-      const mainRect = a.map.wrap.getBoundingClientRect();
+      const mainPaint = a.map.base.getBoundingClientRect();
       const insetRect = b.map.wrap.getBoundingClientRect();
-      const cw = mainRect.width / grid.w;
-      const ch = mainRect.height / grid.h;
-      const ox = mainRect.left - stageRect.left;
-      const oy = mainRect.top - stageRect.top;
+      const cw = mainPaint.width / grid.w;
+      const ch = mainPaint.height / grid.h;
+      const ox = mainPaint.left - stageRect.left;
+      const oy = mainPaint.top - stageRect.top;
       const L = ox + box.x * cw - parentOut;
       const T = oy + box.y * ch - parentOut;
       const R = ox + (box.x + box.w) * cw + parentOut;
@@ -2637,6 +3129,12 @@
       setChromeHidden(!chromeHidden);
       return;
     }
+    if (k === "ArrowUp" || k === "ArrowDown" || k === "+" || k === "-" || k === "=" || k === "_") {
+      e.preventDefault();
+      const zoomIn = k === "ArrowUp" || k === "+" || k === "=";
+      nudgeZoomSize(zoomIn ? -1 : 1); // + / ↑ smaller window; − / ↓ larger
+      return;
+    }
     const modes = { d: "today", m: "month", y: "year", u: "epoch" };
     if (!modes[k]) return;
     e.preventDefault();
@@ -2668,7 +3166,7 @@
       slots[i].map.tick(now);
       finest = Math.min(finest, slots[i].map.layout.grid.cellDur);
     }
-    if (!(mode === "today" && pageIsPortrait()) && zoomChainKey(now) !== lastZoomKey) updateZoom(now);
+    if (zoomChainKey(now) !== lastZoomKey) updateZoom(now);
     const step = Math.max(LOOP_MIN_MS, Math.min(LOOP_MAX_MS, finest));
     setTimeout(loop, clamp(step - (now % step), LOOP_MIN_MS, LOOP_MAX_MS));
   }
