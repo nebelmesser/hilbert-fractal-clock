@@ -97,7 +97,8 @@
       padding: 8px 12px;
     }
     body.fit-mode .top-bar { flex: 0 0 auto; margin-bottom: 8px; }
-    body.chrome-hidden .top-bar { display: none; } /* F — session only, not in localStorage */
+    body.chrome-hidden .top-bar,
+    body.chrome-hidden .info-link { display: none; } /* F — session only, not in localStorage */
     body.fit-mode .stage {
       flex: 1 1 auto;
       min-width: 0;
