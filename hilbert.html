@@ -388,6 +388,8 @@
   const INSET_MIN_D = 1; // finest inset cell: 1ms
   const INSET_MAX_D = MS_SEC; // coarsest inset cell: 1s — min zoom keeps the second panel at this
   const ZOOM_PARENT_SHARE = 0.28; // skip a leaf that still covers ~¼+ of the parent (day 12h)
+  const ZOOM_KEEP_AREA_LO = 0.65; // sliding: next leaf may not shrink below this × locked area
+  const ZOOM_KEEP_AREA_HI = 2.25; // allow a slightly coarser sibling so mixed 3-way does not zoom in
   const ZOOM_RANGE_SHARE = 0.2; // max fraction of the time range
   const ZOOM_BUDGET_QUARTER = 2; // target = budget / this. Raise = smaller yellow box; 1 = use the full budget
   const ZOOM_COLLECT_MIN = 64; // always consider packed blocks at least this large
@@ -395,6 +397,7 @@
   const ZOOM_ASPECT_WEIGHT = 2500000; // row layout: |log(boxAspect / parentAspect)| × this — beat area so the inset matches the main panel
   const ZOOM_ASPECT_LOG_TIE = 0.08; // treat aspects this close as equal (~8%), then use area
   const ZOOM_LABEL_MIN_PX = 18; // if inset glyphs would be smaller, take a coarser (larger) window
+  // Yellow-box min on the parent canvas is ZOOM_BOX_MIN_PX (with the Hilbert walk). Not the inset tile.
   const ZOOM_RES_MAX = 1.15; // inset cells may only slightly exceed the parent grid
   const ZOOM_CSS_SLACK = 1.15; // inset cells may only slightly exceed the CSS pixel count of the tile
   const ZOOM_REFINE_UPGRADE = 1.05; // keep exact 0.1–1s k if it already fills this fraction of the kMax budget
@@ -704,7 +707,7 @@
   }
 
   const ZOOM_MIN_AREA = 8; // smallest packed parent block we will zoom (must match collectHilbertBlocks)
-  const ZOOM_BOX_MIN_PX = 8; // yellow box must stay visible on the parent canvas
+  const ZOOM_BOX_MIN_PX = 8; // min yellow-box side on the parent canvas (CSS px). Not the inset tile.
   const HILBERT_ZOOM_MAX_DEPTH = 12; // Gilbert children at this depth are already tiny
   const ZOOM_DEPTH_AREA_RATIO = 1.15; // skip a depth whose largest leaf is this close to the last kept size
 
@@ -1234,17 +1237,17 @@
     return plan && plan.k >= FACTOR_MIN ? plan : null;
   }
 
-  function insetPlanForBox(grid, box, cssWidth) { // k×k with inset D in [1ms, 1s]; k=1 when the parent is already 1s
+  function insetPlanForBox(grid, box, cssWidth) { // prefer D ≤1s; if that grid would be huge, keep the k that fits the tile
     const k = chooseZoomK(grid.cellDur, box.w, box.h, cssWidth, grid.w, grid.h);
     if (k < 1) return null;
-    let D = grid.cellDur / (k * k);
-    if (D <= INSET_MAX_D + 1) return { k: k, D: D };
+    const fitted = { k: k, D: grid.cellDur / (k * k) };
+    if (fitted.D <= INSET_MAX_D + 1) return fitted;
     const kNeed = Math.max(1, Math.ceil(Math.sqrt(grid.cellDur / INSET_MAX_D) - 1e-12));
-    D = grid.cellDur / (kNeed * kNeed);
-    if (D > INSET_MAX_D + 1) return null;
+    const D = grid.cellDur / (kNeed * kNeed);
+    if (D > INSET_MAX_D + 1) return fitted;
     const cells = box.w * box.h * kNeed * kNeed;
     const parentN = Math.max(1, grid.w * grid.h);
-    if (cells > Math.max(MAX_CELLS_HARD, parentN * 2.5)) return null; // FILL half-side may need a slightly larger inset than chooseZoomK allows
+    if (cells > Math.max(MAX_CELLS_HARD, parentN * 2.5)) return fitted; // century: 1s needs k=64 and millions of cells
     return { k: kNeed, D: D };
   }
 
@@ -1379,7 +1382,52 @@
     const zStart = t0 + leaf.i0 * grid.cellDur;
     const zEnd = Math.min(t1, zStart + leaf.area * grid.cellDur);
     if (!zoomRefinesLabels(t0, t1, grid.cellDur, zStart, zEnd, plan.D)) return null;
+    leaf.depth = depth;
     return leaf;
+  }
+
+  function gilbertLeavesAt(width, height, nowIdx) { // packed leaf at each depth that contains now
+    const out = [];
+    for (let d = 1; d <= HILBERT_ZOOM_MAX_DEPTH; d++) {
+      const leaf = gilbertLeafAt(width, height, nowIdx, d);
+      if (!leaf) continue;
+      if (leaf.area < ZOOM_MIN_AREA) break;
+      if (leaf.box.w * leaf.box.h !== leaf.area) continue;
+      out.push({ box: leaf.box, i0: leaf.i0, i1: leaf.i1, area: leaf.area, depth: d });
+    }
+    return out;
+  }
+
+  function pickLeafNearArea(leaves, wantArea, width, height, grid, cssW, rangeStart, rangeEnd, loose) {
+    // Prefer a leaf whose area stays near wantArea so filling a mixed sibling does not zoom in.
+    if (!leaves.length || !(wantArea >= ZOOM_MIN_AREA)) return null;
+    const lo = wantArea * ZOOM_KEEP_AREA_LO;
+    const hi = wantArea * ZOOM_KEEP_AREA_HI;
+    const t0 = Number.isFinite(rangeStart) ? rangeStart : 0;
+    const t1 = Number.isFinite(rangeEnd) && rangeEnd > t0
+      ? rangeEnd
+      : t0 + grid.cellDur * Math.max(1, grid.cells);
+    let best = null, bestScore = Infinity;
+    for (let i = 0; i < leaves.length; i++) {
+      const leaf = leaves[i];
+      if (!loose && leaf.area > width * height * ZOOM_PARENT_SHARE) continue;
+      const plan = insetPlanForBox(grid, leaf.box, cssW);
+      if (!plan) continue;
+      if (!loose) {
+        const zStart = t0 + leaf.i0 * grid.cellDur;
+        const zEnd = Math.min(t1, zStart + leaf.area * grid.cellDur);
+        if (!zoomRefinesLabels(t0, t1, grid.cellDur, zStart, zEnd, plan.D)) continue;
+      }
+      const a = leaf.area;
+      const inBand = a >= lo && a <= hi;
+      const rel = Math.abs(a - wantArea) / wantArea;
+      const score = inBand ? rel : (10 + Math.abs(Math.log(a / Math.max(1, wantArea))) + (a < lo ? 5 : 0));
+      if (score < bestScore) {
+        bestScore = score;
+        best = leaf;
+      }
+    }
+    return best;
   }
 
   function estimateInsetLabelPx(zStart, zEnd, box, k, parentDur, tileW, tileH) { // typical glyph if this window were the inset
@@ -1815,20 +1863,31 @@
       return win;
     }
 
-    placeZoomWindow(now, depth, maxArea, wantW, wantH, k) { // unique Hilbert tree leaf at this depth that contains now
+    placeZoomWindow(now, depth, maxArea, wantW, wantH, k) { // packed leaf containing now; keep locked area when sliding
       if (!this.layout || !(depth >= 1)) return null;
       const { grid } = this.layout;
       if (now < this.start || now >= this.end) return null;
       const nowIdx = clamp(Math.floor((now - this.start) / grid.cellDur), 0, grid.cells - 1);
       const cssW = this.tileW || this.cssW;
-      const block = pickHilbertLeaf(grid.w, grid.h, nowIdx, depth, grid, cssW, this.start, this.end);
-      if (!block) return null;
       const lock = this._zoomLock;
-      const same = lock && lock.depth === depth && lock.w === block.box.w && lock.h === block.box.h && lock.k >= 1;
+      const keepArea = lock && lock.maxArea >= ZOOM_MIN_AREA;
+      let block = null;
+      if (keepArea) {
+        block = pickLeafNearArea(
+          gilbertLeavesAt(grid.w, grid.h, nowIdx),
+          lock.maxArea, grid.w, grid.h, grid, cssW, this.start, this.end, true
+        );
+      }
+      if (!block) block = pickHilbertLeaf(grid.w, grid.h, nowIdx, depth, grid, cssW, this.start, this.end);
+      if (!block) return null;
+      const placeDepth = block.depth || depth;
+      const same = lock && lock.w === block.box.w && lock.h === block.box.h && lock.k >= 1;
       const kUse = (same && lock.k >= 1) ? lock.k : (k >= 1 ? k : 0);
-      const win = this.winFromBox(block.box, kUse, depth);
+      const win = this.winFromBox(block.box, kUse, placeDepth);
       if (win) {
-        win.maxArea = block.area;
+        win.ladderDepth = keepArea ? lock.depth : placeDepth;
+        win.wantArea = keepArea ? lock.maxArea : block.area;
+        win.maxArea = win.wantArea;
         win.wantW = block.box.w;
         win.wantH = block.box.h;
       }
@@ -1889,7 +1948,7 @@
       return boxContainsCell(this.zoomBox, g, nowIdx);
     }
 
-    slideZoomWindow(now) { // same zoom family: next packed cell along the curve (the one now sits in)
+    slideZoomWindow(now) { // next packed cell; keep the locked area so mixed siblings do not zoom in
       const lock = this._zoomLock;
       if (!lock || !this.layout || !(lock.depth >= 1) || !(lock.maxArea >= ZOOM_MIN_AREA)) return null;
       return this.placeZoomWindow(now, lock.depth, lock.maxArea, lock.wantW, lock.wantH, 0);
@@ -2230,7 +2289,8 @@
         const live = now >= tMin && now < tMax;
         let onFilled = tMax <= now;
         let placeMask = full;
-        if (live) {
+        // Second slabs are small: past/future halves swap as the fill crawls, so every glyph jumps.
+        if (live && unit.id !== "second") {
           if (nPast >= nFuture && nPast > 0) {
             placeMask = past;
             onFilled = true;
@@ -2238,6 +2298,8 @@
             placeMask = future;
             onFilled = false;
           }
+        } else if (live) {
+          onFilled = nPast >= nFuture && nPast > 0;
         }
         pending.push({
           text,
@@ -2974,7 +3036,11 @@
     }
     if (!win && main._zoomLock && main.zoomContainsNow(now)) win = main.lockedZoomWin();
     if (win) {
-      main._zoomLock = { depth: win.depth, maxArea: win.maxArea || win.area, wantW: win.wantW, wantH: win.wantH, w: win.box.w, h: win.box.h, k: win.k, cssW: main.cssW };
+      main._zoomLock = {
+        depth: win.ladderDepth || win.depth,
+        maxArea: win.wantArea || win.maxArea || win.area,
+        wantW: win.wantW, wantH: win.wantH, w: win.box.w, h: win.box.h, k: win.k, cssW: main.cssW
+      };
       main._zoomMinute = minute;
     }
     if (!win) {
