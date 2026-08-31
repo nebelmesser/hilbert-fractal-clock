@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <!-- 
-  One-file Hilbert time map. Range → 2D curve. Fit-only.
+  One-file Hilbert Fractal Clock. Range → 2D curve. Fit-only.
   Colors live in :root. Each zoom level is a packed Hilbert tree leaf (the
   unique partition at that depth that contains now). +/− steps those depths.
   Coarsest size keeps inset D ≤1s. When a leaf fills, the next sibling starts
   empty — tiles do not overlap. Square 2ⁿ grids split into four quadrants.
   Yellow frame sits outside the zoom box. Fit tiles share height in a row, width in a column.
   Today with one panel keeps the natural day picture — do not two-column pack it.
+  
   Made by Nebelmesser ver. 1.0 @ 2026-08-30. MIT License.
   https://github.com/nebelmesser/playground
   https://nebelmesser.com/
@@ -15,18 +16,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hilbert Clock</title>
+  <title>Hilbert Fractal Clock</title>
   <meta name="description" content="A clock that maps time onto a 2D Hilbert curve. Consecutive moments stay adjacent, so an interval appears as a compact region rather than scattered pixels.">
   <link rel="canonical" href="https://nebelmesser.com/hilbert/clock.html">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://nebelmesser.com/hilbert/clock.html">
-  <meta property="og:title" content="Hilbert time map">
+  <meta property="og:title" content="Hilbert Fractal Clock">
   <meta property="og:description" content="A clock that maps time onto a 2D Hilbert curve. Consecutive moments stay adjacent, so an interval appears as a compact region rather than scattered pixels.">
-  <meta property="og:image" content="https://nebelmesser.com/hilbert/img/screen.png">
+  <meta property="og:image" content="https://nebelmesser.com/hilbert/img/preview.png">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Hilbert time map">
+  <meta name="twitter:title" content="Hilbert Fractal Clock">
   <meta name="twitter:description" content="A clock that maps time onto a 2D Hilbert curve. Consecutive moments stay adjacent, so an interval appears as a compact region rather than scattered pixels.">
-  <meta name="twitter:image" content="https://nebelmesser.com/hilbert/img/screen.png">
+  <meta name="twitter:image" content="https://nebelmesser.com/hilbert/img/preview.png">
   <style>
     /* Palette: JS reads these via loadTheme / cssPixel. Tune here, not in JS. */
     :root {
