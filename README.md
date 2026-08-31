@@ -1,6 +1,6 @@
 # Hilbert Clock
 
-![Hilbert Clock](/img/screen.png)
+![Hilbert Clock](hilbert/img/screen.png)
 
 A single-file clock that draws a time range as a 2D space-filling curve.
 [Open the live map](https://nebelmesser.com/hilbert/clock.html)
