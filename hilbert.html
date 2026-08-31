@@ -1,11 +1,10 @@
 <!DOCTYPE html>
 <!-- 
   One-file Hilbert time map. Range → 2D curve. Fit-only.
-  Colors live in :root. Each zoom level is one Gilbert-partition depth: packed
-  Hilbert cells that cover the parent without holes. +/− steps those depths
-  (sizes follow the tree, not 2/4/8). Coarsest depth keeps inset D ≤1s.
-  Current tile is the leaf that contains now; when it fills, the next leaf
-  along the curve. Prefer a whole partition over a half-panel crop.
+  Colors live in :root. Each zoom level is a packed Hilbert tree leaf (the
+  unique partition at that depth that contains now). +/− steps those depths.
+  Coarsest size keeps inset D ≤1s. When a leaf fills, the next sibling starts
+  empty — tiles do not overlap. Square 2ⁿ grids split into four quadrants.
   Yellow frame sits outside the zoom box. Equal Fit tiles.
   Today with one panel keeps the natural day picture — do not two-column pack it.
   Made by Nebelmesser ver. 1.0 @ 2026-08-30. MIT License.
@@ -41,6 +40,8 @@
       --label-live-empty: #ff0000; /* live-unit label on the empty half */
       --current-outline: rgba(255, 107, 107, 0.5); /* stroke around the live unit */
       --zoom: rgba(255, 196, 72, 0.95); /* yellow box + inset frame */
+      --zoom-frame-w: 2px; /* ZOOM_FRAME_W — square icons + map frames */
+      --zoom-muted: rgba(255, 196, 72, 0.28); /* disabled zoom icons */
       --connector: rgba(240, 180, 41, 0.7); /* diagonals: parent box → inset */
       --bound-0: rgba(255, 255, 255, 0.82); /* inherited higher-unit edges on the inset */
       --bound-1: rgba(255, 255, 255, 0.55); /* coarsest unit on this map */
@@ -180,7 +181,23 @@
       min-width: 36px;
       padding-left: 10px;
       padding-right: 10px;
-      /* border: 1px solid var(--zoom); */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .controls .zoom-btns button:disabled {
+      opacity: 1; /* fade the square, not the whole chrome */
+    }
+    .controls .zoom-btns .zoom-icon {
+      box-sizing: border-box;
+      border: var(--zoom-frame-w) solid var(--zoom);
+      background: transparent;
+      pointer-events: none;
+    }
+    .controls .zoom-btns .zoom-icon-sm { width: 8px; height: 8px; } /* zoom in — smaller yellow box */
+    .controls .zoom-btns .zoom-icon-lg { width: 16px; height: 16px; } /* zoom out — larger yellow box */
+    .controls .zoom-btns button:disabled .zoom-icon {
+      border-color: var(--zoom-muted);
     }
     .arbitrary {
       display: none;
@@ -211,10 +228,6 @@
       margin: 0 auto;
       overflow: visible;
       background: var(--bg);
-    }
-    .map.map-zoom {
-      outline: 2px solid var(--zoom); /* ZOOM_FRAME_W — yellow frame */
-      outline-offset: 1px; /* ZOOM_FRAME_OUTSET — sit outside the Hilbert pixels, not on them */
     }
     .map canvas {
       display: block;
@@ -261,9 +274,10 @@
   </div>
   <script>
 // One-file Hilbert time map. Range → 2D curve. Fit-only. No weeks.
-// Colors live in :root. Each zoom level is a Gilbert-partition depth (packed
-// Hilbert cells). +/− follows those cell sizes, not a 2/4/8 grid. Inset D is
-// any value ≤1s. Yellow frame sits outside the zoom box. Equal Fit tiles.
+// Colors live in :root. Each zoom level is a Gilbert/Hilbert tree leaf at a
+// partition depth. +/− follows those depths. Inset D is any value ≤1s.
+// Yellow frame sits outside the zoom box. Equal Fit tiles. Even squares
+// split 4-way (Hilbert quadrants), not a 3-way Gilbert band.
 // Today with one panel keeps the natural day picture — do not two-column pack it.
 (function () {
   "use strict";
@@ -373,7 +387,7 @@
   // Zoom / overlay
   const INSET_MIN_D = 1; // finest inset cell: 1ms
   const INSET_MAX_D = MS_SEC; // coarsest inset cell: 1s — min zoom keeps the second panel at this
-  const ZOOM_PARENT_SHARE = 0.28; // half-side yellow box covers 1/4 of parent cells
+  const ZOOM_PARENT_SHARE = 0.28; // skip a leaf that still covers ~¼+ of the parent (day 12h)
   const ZOOM_RANGE_SHARE = 0.2; // max fraction of the time range
   const ZOOM_BUDGET_QUARTER = 2; // target = budget / this. Raise = smaller yellow box; 1 = use the full budget
   const ZOOM_COLLECT_MIN = 64; // always consider packed blocks at least this large
@@ -390,7 +404,7 @@
   const CURRENT_OUTLINE_W = 1.4; // stroke around the live coarsest unit
   const ZOOM_FRAME_W = 2; // yellow box stroke (CSS px)
   const ZOOM_FRAME_OUTSET = 1; // yellow box sits this many px outside the cells
-  const INSET_FRAME_OUT = 2; // .map-zoom outline; keep = ZOOM_FRAME_OUTSET + ZOOM_FRAME_W/2
+  const INSET_FRAME_OUT = 2; // yellow frame sits this far outside the canvas (ZOOM_FRAME_OUTSET + ZOOM_FRAME_W/2)
 
   // Bound strokes (CSS px)
   const BOUND_W = [0.6, 0.4, 0.2]; // [coarsest, middle, fallback]
@@ -671,24 +685,9 @@
         for (let k = 0; k < h; k++) { visit(x, y); x += dbx; y += dby; }
         return;
       }
-      let ax2 = Math.floor(ax / 2), ay2 = Math.floor(ay / 2);
-      let bx2 = Math.floor(bx / 2), by2 = Math.floor(by / 2);
-      const w2 = Math.abs(ax2 + ay2);
-      const h2 = Math.abs(bx2 + by2);
-      if (2 * w > 3 * h) {
-        if ((w2 % 2) && (w > 2)) { ax2 += dax; ay2 += day; }
-        hilbert2d(x, y, ax2, ay2, bx, by);
-        hilbert2d(x + ax2, y + ay2, ax - ax2, ay - ay2, bx, by);
-      } else {
-        if ((h2 % 2) && (h > 2)) { bx2 += dbx; by2 += dby; }
-        hilbert2d(x, y, bx2, by2, ax2, ay2);
-        hilbert2d(x + bx2, y + by2, ax, ay, bx - bx2, by - by2);
-        hilbert2d(
-          x + (ax - dax) + (bx2 - dbx),
-          y + (ay - day) + (by2 - dby),
-          -bx2, -by2, -(ax - ax2), -(ay - ay2)
-        );
-      }
+      gilbertSplitWalk(x, y, ax, ay, bx, by, 0, 0, w, h, function (nx, ny, nax, nay, nbx, nby) {
+        hilbert2d(nx, ny, nax, nay, nbx, nby);
+      });
     }
     hilbert2d(0, 0, width, 0, 0, height);
     return { xs, ys, at, n: i };
@@ -705,6 +704,7 @@
   }
 
   const ZOOM_MIN_AREA = 8; // smallest packed parent block we will zoom (must match collectHilbertBlocks)
+  const ZOOM_BOX_MIN_PX = 8; // yellow box must stay visible on the parent canvas
   const HILBERT_ZOOM_MAX_DEPTH = 12; // Gilbert children at this depth are already tiny
   const ZOOM_DEPTH_AREA_RATIO = 1.15; // skip a depth whose largest leaf is this close to the last kept size
 
@@ -719,41 +719,33 @@
       visit(box, iStart, iEnd, area);
       if (h === 1 || w === 1) return;
       if (stopArea != null && area <= stopArea) return;
-      const dax = sign(ax), day = sign(ay);
-      const dbx = sign(bx), dby = sign(by);
-      let ax2 = Math.floor(ax / 2), ay2 = Math.floor(ay / 2);
-      let bx2 = Math.floor(bx / 2), by2 = Math.floor(by / 2);
-      const w2 = Math.abs(ax2 + ay2);
-      const h2 = Math.abs(bx2 + by2);
-      if (2 * w > 3 * h) {
-        if ((w2 % 2) && (w > 2)) { ax2 += dax; ay2 += day; }
-        const a1 = Math.abs(ax2 + ay2) * h;
-        walk(x, y, ax2, ay2, bx, by, iStart);
-        walk(x + ax2, y + ay2, ax - ax2, ay - ay2, bx, by, iStart + a1);
-      } else {
-        if ((h2 % 2) && (h > 2)) { bx2 += dbx; by2 += dby; }
-        const a1 = Math.abs(bx2 + by2) * Math.abs(ax2 + ay2);
-        const a2 = w * Math.abs((bx - bx2) + (by - by2));
-        walk(x, y, bx2, by2, ax2, ay2, iStart);
-        walk(x + bx2, y + by2, ax, ay, bx - bx2, by - by2, iStart + a1);
-        walk(
-          x + (ax - dax) + (bx2 - dbx),
-          y + (ay - day) + (by2 - dby),
-          -bx2, -by2, -(ax - ax2), -(ay - ay2),
-          iStart + a1 + a2
-        );
-      }
+      gilbertSplitWalk(x, y, ax, ay, bx, by, iStart, 0, w, h, function (nx, ny, nax, nay, nbx, nby, ni) {
+        walk(nx, ny, nax, nay, nbx, nby, ni);
+      });
     }
     walk(0, 0, width, 0, 0, height, 0);
   }
 
-  function gilbertSplitWalk(x, y, ax, ay, bx, by, iStart, depth, w, h, walkChild) { // one Gilbert 2- or 3-way split
+  function gilbertSplitWalk(x, y, ax, ay, bx, by, iStart, depth, w, h, walkChild) { // 4-way Hilbert on even squares; else Gilbert 2- or 3-way
     const dax = sign(ax), day = sign(ay);
     const dbx = sign(bx), dby = sign(by);
     let ax2 = Math.floor(ax / 2), ay2 = Math.floor(ay / 2);
     let bx2 = Math.floor(bx / 2), by2 = Math.floor(by / 2);
     const w2 = Math.abs(ax2 + ay2);
     const h2 = Math.abs(bx2 + by2);
+    if (w === h && (w % 2 === 0) && w > 1) {
+      const aQ = w2 * Math.abs(bx2 + by2);
+      walkChild(x, y, bx2, by2, ax2, ay2, iStart, depth + 1);
+      walkChild(x + bx2, y + by2, ax2, ay2, bx2, by2, iStart + aQ, depth + 1);
+      walkChild(x + ax2 + bx2, y + ay2 + by2, ax2, ay2, bx2, by2, iStart + 2 * aQ, depth + 1);
+      walkChild(
+        x + (ax - dax) + (bx2 - dbx),
+        y + (ay - day) + (by2 - dby),
+        -bx2, -by2, -(ax - ax2), -(ay - ay2),
+        iStart + 3 * aQ, depth + 1
+      );
+      return;
+    }
     if (2 * w > 3 * h) {
       if ((w2 % 2) && (w > 2)) { ax2 += dax; ay2 += day; }
       const a1 = Math.abs(ax2 + ay2) * h;
@@ -1273,9 +1265,10 @@
     return { cssW: box.w, cssH: box.h };
   }
 
-  function zoomBoxAspectErr(box, targetAspect) { // |log((w/h) / target)| — 0 is a match
-    const a = box.w / Math.max(1, box.h);
-    return Math.abs(Math.log(a / Math.max(1e-6, targetAspect)));
+  function zoomBoxCssOk(grid, box, cssW) { // yellow box large enough to see on the parent canvas
+    if (!(cssW > 0)) return true;
+    const cell = cssW / Math.max(1, grid.w);
+    return box.w * cell >= ZOOM_BOX_MIN_PX && box.h * cell >= ZOOM_BOX_MIN_PX;
   }
 
   function boxContainsCell(box, g, nowIdx) { // now's parent cell sits inside the yellow box
@@ -1283,67 +1276,73 @@
     return x >= box.x && y >= box.y && x < box.x + box.w && y < box.y + box.h;
   }
 
-  function hilbertDepthInfo(width, height, depth, parentAspect) { // packed leaves at this Gilbert depth
-    let maxArea = 0, minArea = Infinity, n = 0, fillN = 0;
+  function hilbertDepthInfo(width, height, depth) { // packed leaves at this Hilbert/Gilbert depth
+    let maxArea = 0, minArea = Infinity, n = 0, packedN = 0;
     let maxBox = null;
-    let fillArea = 0, fillCount = 0, fillW = 0, fillH = 0;
-    const fillSizes = {};
+    let commonArea = 0, commonCount = 0, commonW = 0, commonH = 0;
+    const sizes = {};
     gilbertCoverWalk(width, height, null, depth, (box, i0, i1, area) => {
-      if (box.w * box.h !== area) return;
       n++;
+      if (box.w * box.h !== area) return;
+      packedN++;
       if (area > maxArea) {
         maxArea = area;
         maxBox = { x: box.x, y: box.y, w: box.w, h: box.h };
       }
       if (area < minArea) minArea = area;
-      if (zoomBoxAspectErr(box, parentAspect) <= ZOOM_ASPECT_LOG_TIE) {
-        fillN++;
-        const key = box.w + "x" + box.h;
-        const c = (fillSizes[key] || 0) + 1;
-        fillSizes[key] = c;
-        if (c > fillCount || (c === fillCount && area > fillArea)) {
-          fillCount = c;
-          fillArea = area;
-          fillW = box.w;
-          fillH = box.h;
-        }
+      const key = box.w + "x" + box.h;
+      const c = (sizes[key] || 0) + 1;
+      sizes[key] = c;
+      if (c > commonCount || (c === commonCount && area > commonArea)) {
+        commonCount = c;
+        commonArea = area;
+        commonW = box.w;
+        commonH = box.h;
       }
     });
-    return { depth, n, maxArea, minArea, maxBox, fillN, fillArea, fillW, fillH };
+    return {
+      depth, n, packedN, maxArea, minArea, maxBox,
+      commonW, commonH, commonArea, commonCount,
+      uniform: Object.keys(sizes).length === 1
+    };
   }
 
   const hilbertZoomCache = new Map();
 
-  function hilbertZoomLevels(grid, cssW) { // coarsest-first Gilbert depths; skip strip-only steps when a whole cell exists
-    const key = grid.w + "x" + grid.h + ":" + grid.cellDur + ":" + Math.round(cssW || 0);
+  function hilbertZoomLevels(grid, cssW, rangeStart, rangeEnd) { // coarsest-first: one Hilbert tree depth per step
+    const t0 = Number.isFinite(rangeStart) ? rangeStart : 0;
+    const t1 = Number.isFinite(rangeEnd) && rangeEnd > t0
+      ? rangeEnd
+      : t0 + grid.cellDur * Math.max(1, grid.cells);
+    const key = grid.w + "x" + grid.h + ":" + grid.cellDur + ":" + Math.round(cssW || 0) + ":" + t0 + ":" + t1;
     const hit = hilbertZoomCache.get(key);
     if (hit) return hit;
-    const parentAspect = grid.w / Math.max(1, grid.h);
-    const raw = [];
+    const out = [];
     for (let d = 1; d <= HILBERT_ZOOM_MAX_DEPTH; d++) {
-      const info = hilbertDepthInfo(grid.w, grid.h, d, parentAspect);
+      const info = hilbertDepthInfo(grid.w, grid.h, d);
       if (!info.maxBox || info.maxArea < ZOOM_MIN_AREA) break;
-      const fillBox = info.fillW ? { w: info.fillW, h: info.fillH } : null;
-      const planFill = fillBox ? insetPlanForBox(grid, fillBox, cssW) : null;
-      const planMax = insetPlanForBox(grid, info.maxBox, cssW);
-      if (!planFill && !planMax) continue;
-      if (raw.length && info.maxArea > raw[raw.length - 1].maxArea / ZOOM_DEPTH_AREA_RATIO) continue;
-      const plan = planFill || planMax;
-      raw.push({
+      if (info.minArea < ZOOM_MIN_AREA) break;
+      const w = info.commonW, h = info.commonH;
+      if (!(w >= 1 && h >= 1)) continue;
+      const area = info.commonArea || (w * h);
+      if (area < ZOOM_MIN_AREA) continue;
+      if (area > grid.w * grid.h * ZOOM_PARENT_SHARE) continue; // half-map crop does not add detail (day 12h at hour labels)
+      if (!zoomBoxCssOk(grid, { w: w, h: h }, cssW)) break;
+      const plan = insetPlanForBox(grid, info.maxBox, cssW);
+      if (!plan) continue;
+      const zEnd = Math.min(t1, t0 + area * grid.cellDur);
+      if (!zoomRefinesLabels(t0, t1, grid.cellDur, t0, zEnd, plan.D)) continue;
+      if (out.length && area > out[out.length - 1].area / ZOOM_DEPTH_AREA_RATIO) continue;
+      out.push({
         depth: d,
-        w: info.fillW || info.maxBox.w,
-        h: info.fillH || info.maxBox.h,
-        area: info.fillArea || info.maxArea,
+        w: w,
+        h: h,
+        area: area,
         maxArea: info.maxArea,
         k: plan.k,
         D: plan.D,
-        fillN: info.fillN
+        mixed: !info.uniform
       });
-    }
-    const out = [];
-    for (let i = 0; i < raw.length; i++) {
-      if (raw[i].fillN === 0 && out.length) continue; // half-panel strips — keep the whole cells at the next depth
-      out.push(raw[i]);
     }
     if (hilbertZoomCache.size >= 24) hilbertZoomCache.delete(hilbertZoomCache.keys().next().value);
     hilbertZoomCache.set(key, out);
@@ -1366,31 +1365,21 @@
     return best;
   }
 
-  function pickPackedZoomBlock(width, height, nowIdx, maxArea, grid, cssW, parentAspect, wantW, wantH) { // packed same-size Hilbert tiles first; else largest whole cell ≤ maxArea
-    if (wantW >= 1 && wantH >= 1) {
-      const tiles = collectHilbertTiles(width, height, wantW, wantH);
-      let containing = null;
-      for (let i = 0; i < tiles.length; i++) {
-        const t = tiles[i];
-        if (nowIdx >= t.i0 && nowIdx < t.i1) {
-          if (!containing || t.i0 > containing.i0) containing = t;
-        }
-      }
-      if (containing && insetPlanForBox(grid, containing.box, cssW)) return containing;
-    }
-    const blocks = collectHilbertBlocks(width, height, nowIdx, maxArea);
-    let best = null;
-    let bestFill = null;
-    for (let i = 0; i < blocks.length; i++) {
-      const b = blocks[i];
-      if (!insetPlanForBox(grid, b.box, cssW)) continue;
-      if (!best || b.area > best.area) best = b;
-      if (zoomBoxAspectErr(b.box, parentAspect) <= ZOOM_ASPECT_LOG_TIE) {
-        if (!bestFill || b.area > bestFill.area) bestFill = b;
-      }
-    }
-    if (bestFill && best && bestFill.area >= best.area * 0.45) return bestFill;
-    return bestFill || best;
+  function pickHilbertLeaf(width, height, nowIdx, depth, grid, cssW, rangeStart, rangeEnd) { // unique packed tree leaf at this depth that contains now
+    const leaf = gilbertLeafAt(width, height, nowIdx, depth);
+    if (!leaf || leaf.area < ZOOM_MIN_AREA) return null;
+    if (leaf.box.w * leaf.box.h !== leaf.area) return null;
+    if (leaf.area > width * height * ZOOM_PARENT_SHARE) return null; // now in a fat 3-way band — fall back to a finer sibling depth
+    const plan = insetPlanForBox(grid, leaf.box, cssW);
+    if (!plan) return null;
+    const t0 = Number.isFinite(rangeStart) ? rangeStart : 0;
+    const t1 = Number.isFinite(rangeEnd) && rangeEnd > t0
+      ? rangeEnd
+      : t0 + grid.cellDur * Math.max(1, grid.cells);
+    const zStart = t0 + leaf.i0 * grid.cellDur;
+    const zEnd = Math.min(t1, zStart + leaf.area * grid.cellDur);
+    if (!zoomRefinesLabels(t0, t1, grid.cellDur, zStart, zEnd, plan.D)) return null;
+    return leaf;
   }
 
   function estimateInsetLabelPx(zStart, zEnd, box, k, parentDur, tileW, tileH) { // typical glyph if this window were the inset
@@ -1419,6 +1408,22 @@
       if (picked.length === MAX_BOUND_LEVELS) break;
     }
     return picked;
+  }
+
+  function zoomLabelUnit(start, end, cellDur) { // the unit this map would letter
+    const levels = pickLevels(start, end, cellDur);
+    if (!levels.length) return null;
+    return levels[pickLabelLevelIndex(levels, start, end)];
+  }
+
+  function zoomRefinesLabels(parentStart, parentEnd, parentDur, zStart, zEnd, insetD) {
+    // Coarsest zoom must letter a finer unit than the parent (day hours → minutes).
+    const parent = zoomLabelUnit(parentStart, parentEnd, parentDur);
+    const inset = zoomLabelUnit(zStart, zEnd, insetD);
+    if (!parent || !inset) return true;
+    const pi = UNITS.findIndex((u) => u.id === parent.id);
+    const zi = UNITS.findIndex((u) => u.id === inset.id);
+    return zi > pi;
   }
 
   function pickLabelLevelIndex(levels, start, end) { // one label level; prefer days on a ~month view; else ~18 regions
@@ -1760,7 +1765,7 @@
       const { grid } = this.layout;
       const cssW = this.tileW || this.cssW;
       this._zoomAspect = grid.w / grid.h;
-      const levels = hilbertZoomLevels(grid, cssW);
+      const levels = hilbertZoomLevels(grid, cssW, this.start, this.end);
       const out = [];
       for (let t = 0; t < levels.length; t++) {
         const L = levels[t];
@@ -1810,38 +1815,54 @@
       return win;
     }
 
-    placeZoomWindow(now, depth, maxArea, wantW, wantH, k) { // packed same-size Hilbert tile, else the largest whole cell in this budget
-      if (!this.layout || !(depth >= 1) || !(maxArea >= ZOOM_MIN_AREA)) return null;
+    placeZoomWindow(now, depth, maxArea, wantW, wantH, k) { // unique Hilbert tree leaf at this depth that contains now
+      if (!this.layout || !(depth >= 1)) return null;
       const { grid } = this.layout;
       if (now < this.start || now >= this.end) return null;
       const nowIdx = clamp(Math.floor((now - this.start) / grid.cellDur), 0, grid.cells - 1);
-      const parentAspect = grid.w / Math.max(1, grid.h);
       const cssW = this.tileW || this.cssW;
-      const block = pickPackedZoomBlock(grid.w, grid.h, nowIdx, maxArea, grid, cssW, parentAspect, wantW, wantH);
-      if (!block || block.box.w < 1 || block.box.h < 1) return null;
+      const block = pickHilbertLeaf(grid.w, grid.h, nowIdx, depth, grid, cssW, this.start, this.end);
+      if (!block) return null;
       const lock = this._zoomLock;
-      const same = lock && lock.depth === depth && lock.w === block.box.w && lock.h === block.box.h;
+      const same = lock && lock.depth === depth && lock.w === block.box.w && lock.h === block.box.h && lock.k >= 1;
       const kUse = (same && lock.k >= 1) ? lock.k : (k >= 1 ? k : 0);
       const win = this.winFromBox(block.box, kUse, depth);
       if (win) {
-        win.maxArea = maxArea;
-        win.wantW = wantW;
-        win.wantH = wantH;
+        win.maxArea = block.area;
+        win.wantW = block.box.w;
+        win.wantH = block.box.h;
       }
       return win;
     }
 
     pickZoomWindow(now) {
-      // packed Gilbert budget; stored area picks the zoom level from partition cell sizes.
+      // stored area picks a Hilbert tree depth; the yellow box is the leaf that contains now
       if (!this.layout) return null;
       const { grid } = this.layout;
       const cssW = this.tileW || this.cssW;
       this._zoomAspect = grid.w / grid.h;
-      const levels = hilbertZoomLevels(grid, cssW);
+      const levels = hilbertZoomLevels(grid, cssW, this.start, this.end);
       if (!levels.length) return null;
       const L = pickZoomLevel(levels, currentZoomArea());
-      if (!L) return null;
-      return this.placeZoomWindow(now, L.depth, L.maxArea, L.w, L.h, 0);
+      const tried = {};
+      const tryDepth = (Lv) => {
+        if (!Lv || tried[Lv.depth]) return null;
+        tried[Lv.depth] = true;
+        return this.placeZoomWindow(now, Lv.depth, Lv.maxArea, Lv.w, Lv.h, 0);
+      };
+      let win = tryDepth(L);
+      if (win) return win;
+      const rest = levels.slice().sort((a, b) => {
+        const want = L ? L.area : 0;
+        const da = Math.abs(a.area - want), db = Math.abs(b.area - want);
+        if (da !== db) return da - db;
+        return b.area - a.area;
+      });
+      for (let i = 0; i < rest.length; i++) {
+        win = tryDepth(rest[i]);
+        if (win) return win;
+      }
+      return null;
     }
 
     remapZoomRange() { // new parent grid: keep zoom depth, snap to the packed cell at now
@@ -1849,7 +1870,7 @@
       const lock = this._zoomLock;
       const { grid } = this.layout;
       const cssW = this.tileW || this.cssW;
-      const levels = hilbertZoomLevels(grid, cssW);
+      const levels = hilbertZoomLevels(grid, cssW, this.start, this.end);
       let L = pickZoomLevel(levels, currentZoomArea());
       if (lock && lock.depth >= 1) {
         for (let i = 0; i < levels.length; i++) {
@@ -2054,6 +2075,11 @@
         ctx.lineWidth = ZOOM_FRAME_W;
         ctx.lineJoin = "miter";
         ctx.strokeRect(rx - ZOOM_FRAME_OUTSET, ry - ZOOM_FRAME_OUTSET, rw + ZOOM_FRAME_OUTSET * 2, rh + ZOOM_FRAME_OUTSET * 2); // outside the selection, not inset into pixels
+      } else if (this.wrap.classList.contains("map-zoom")) {
+        ctx.strokeStyle = theme.zoom;
+        ctx.lineWidth = ZOOM_FRAME_W;
+        ctx.lineJoin = "miter";
+        ctx.strokeRect(-ZOOM_FRAME_OUTSET, -ZOOM_FRAME_OUTSET, this.cssW + ZOOM_FRAME_OUTSET * 2, this.cssH + ZOOM_FRAME_OUTSET * 2); // hug the letterboxed grid, not the Fit wrap
       }
     }
 
@@ -2498,12 +2524,12 @@
     zoomWrap.className = "zoom-btns";
     zoomInBtn = document.createElement("button");
     zoomInBtn.type = "button";
-    zoomInBtn.innerHTML = "&plus;";
+    zoomInBtn.innerHTML = '<span class="zoom-icon zoom-icon-sm" aria-hidden="true"></span>';
     zoomInBtn.setAttribute("aria-label", "Zoom in");
     zoomInBtn.addEventListener("click", () => nudgeZoomSize(-1));
     zoomOutBtn = document.createElement("button");
     zoomOutBtn.type = "button";
-    zoomOutBtn.innerHTML = "&minus;";
+    zoomOutBtn.innerHTML = '<span class="zoom-icon zoom-icon-lg" aria-hidden="true"></span>';
     zoomOutBtn.setAttribute("aria-label", "Zoom out");
     zoomOutBtn.addEventListener("click", () => nudgeZoomSize(1));
     zoomWrap.appendChild(zoomInBtn);
@@ -2615,7 +2641,8 @@
     return { width, aspect: slotAspect(width, availH), availH: availH };
   }
 
-  function insetDismissible(main) { // parent already ≤1s: zoom out may hide the second panel
+  function insetDismissible(main) { // Today: − past coarsest hides the second panel (parent may be ~1s)
+    if (mode === "today") return true;
     return !!(main && main.layout && main.layout.grid.cellDur <= INSET_MAX_D);
   }
 
@@ -2860,10 +2887,6 @@
     const wrap = slot.map.wrap.getBoundingClientRect();
     let left = wrap.left;
     let right = wrap.right;
-    if (slot.map.wrap.classList.contains("map-zoom")) {
-      left -= INSET_FRAME_OUT;
-      right += INSET_FRAME_OUT;
-    }
     const hl = slot.map.hl;
     if (hl) {
       const r = hl.getBoundingClientRect();
@@ -2990,17 +3013,23 @@
     return win.start + "-" + win.end + ":" + win.box.w + "x" + win.box.h;
   }
 
-  function listZoomLadder(now) { // Gilbert depths, small tiles→large; idx is the current packed cell's depth
+  function listZoomLadder(now) { // tree depths, small→large; idx is the locked depth
     const main = slots[0] && slots[0].map;
     if (!main || !main.layout) return { uniq: [], idx: -1 };
     const { grid } = main.layout;
     const cssW = main.tileW || main.cssW;
-    const levels = hilbertZoomLevels(grid, cssW);
+    const levels = hilbertZoomLevels(grid, cssW, main.start, main.end);
+    const nowIdx = (now >= main.start && now < main.end)
+      ? clamp(Math.floor((now - main.start) / grid.cellDur), 0, grid.cells - 1)
+      : 0;
     const uniq = [];
     for (let t = 0; t < levels.length; t++) {
       const L = levels[t];
+      if (!pickHilbertLeaf(grid.w, grid.h, nowIdx, L.depth, grid, cssW, main.start, main.end)) continue;
       uniq.push({
         box: { x: 0, y: 0, w: L.w, h: L.h },
+        w: L.w,
+        h: L.h,
         area: L.area,
         k: L.k,
         depth: L.depth,
@@ -3009,24 +3038,37 @@
       });
     }
     uniq.sort((a, b) => a.area - b.area);
+    const lock = main._zoomLock;
     let idx = -1;
-    if (main._zoomLock && main._zoomLock.depth >= 1) {
+    if (lock && lock.depth >= 1) {
       for (let i = 0; i < uniq.length; i++) {
-        if (uniq[i].depth === main._zoomLock.depth) { idx = i; break; }
+        if (uniq[i].depth === lock.depth) { idx = i; break; }
+      }
+    }
+    if (idx < 0 && lock && lock.wantW >= 1 && lock.wantH >= 1) {
+      for (let i = 0; i < uniq.length; i++) {
+        if (uniq[i].w === lock.wantW && uniq[i].h === lock.wantH) { idx = i; break; }
+      }
+    }
+    if (idx < 0 && lock && lock.w >= 1 && lock.h >= 1) {
+      for (let i = 0; i < uniq.length; i++) {
+        if (uniq[i].w === lock.w && uniq[i].h === lock.h) { idx = i; break; }
+      }
+    }
+    if (idx < 0 && main.zoomBox) {
+      for (let i = 0; i < uniq.length; i++) {
+        if (uniq[i].w === main.zoomBox.w && uniq[i].h === main.zoomBox.h) { idx = i; break; }
       }
     }
     if (idx < 0 && main.zoomBox) {
       const area = main.zoomBox.w * main.zoomBox.h;
+      let best = Infinity;
       for (let i = 0; i < uniq.length; i++) {
-        if (Math.abs(uniq[i].area - area) / Math.max(1, uniq[i].area) < 0.2) { idx = i; break; }
-      }
-      if (idx < 0) {
-        for (let i = 0; i < uniq.length; i++) {
-          if (uniq[i].area >= area) { idx = i; break; }
-        }
+        const d = Math.abs(uniq[i].area - area);
+        if (d < best) { best = d; idx = i; }
       }
     }
-    if (idx < 0 && currentZoomArea() > 0) {
+    if (idx < 0 && currentZoomArea() > 0 && currentZoomArea() < 1e14) {
       const want = currentZoomArea();
       let best = Infinity;
       for (let i = 0; i < uniq.length; i++) {
@@ -3083,7 +3125,18 @@
       return;
     }
     let idx = lad.idx;
-    if (idx < 0) idx = on ? lad.uniq.length - 1 : 0;
+    if (idx < 0) {
+      const want = currentZoomArea();
+      if (on && want > 0 && want < 1e14) {
+        let best = Infinity;
+        for (let i = 0; i < lad.uniq.length; i++) {
+          const d = Math.abs(lad.uniq[i].area - want);
+          if (d < best) { best = d; idx = i; }
+        }
+      } else {
+        idx = on ? lad.uniq.length - 1 : 0;
+      }
+    }
     const next = idx + dir;
     if (next >= lad.uniq.length && dismiss && dir > 0) {
       hideFineInset();
@@ -3105,8 +3158,7 @@
     connectors.setAttribute("viewBox", "0 0 " + stageRect.width + " " + stageRect.height);
     connectors.setAttribute("width", String(stageRect.width));
     connectors.setAttribute("height", String(stageRect.height));
-    const parentOut = ZOOM_FRAME_OUTSET + ZOOM_FRAME_W / 2; // canvas stroke sits outside the cells
-    const insetOut = INSET_FRAME_OUT;
+    const parentOut = INSET_FRAME_OUT; // yellow stroke sits outside the cells
     for (let i = 0; i < slots.length - 1; i++) {
       const a = slots[i];
       const b = slots[i + 1];
@@ -3115,7 +3167,7 @@
       if (!box || !a.map.layout) continue;
       const grid = a.map.layout.grid;
       const mainPaint = a.map.base.getBoundingClientRect();
-      const insetRect = b.map.wrap.getBoundingClientRect();
+      const insetPaint = b.map.base.getBoundingClientRect();
       const cw = mainPaint.width / grid.w;
       const ch = mainPaint.height / grid.h;
       const ox = mainPaint.left - stageRect.left;
@@ -3124,10 +3176,10 @@
       const T = oy + box.y * ch - parentOut;
       const R = ox + (box.x + box.w) * cw + parentOut;
       const B = oy + (box.y + box.h) * ch + parentOut;
-      const iL = insetRect.left - stageRect.left - insetOut;
-      const iT = insetRect.top - stageRect.top - insetOut;
-      const iR = insetRect.right - stageRect.left + insetOut;
-      const iB = insetRect.bottom - stageRect.top + insetOut;
+      const iL = insetPaint.left - stageRect.left - parentOut;
+      const iT = insetPaint.top - stageRect.top - parentOut;
+      const iR = insetPaint.right - stageRect.left + parentOut;
+      const iB = insetPaint.bottom - stageRect.top + parentOut;
       const side = stackEl.classList.contains("fit-row");
       const corners = side ? [ // row: outer right of parent frame → outer left of inset frame
         [R, T, iL, iT],
