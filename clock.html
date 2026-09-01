@@ -559,7 +559,7 @@
     if (raw == null || raw === "") return 1;
     const n = parseFloat(raw);
     if (!Number.isFinite(n) || !(n > 0)) return 1;
-    return Math.min(n, 1e6);
+    return Math.min(n, 1e12);
   }
   const _qs = new URLSearchParams(location.search);
   const clockOrigin = parseClockTime(_qs.get("start") || _qs.get("time")); // start= preferred; time= still works
