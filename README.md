@@ -1,6 +1,6 @@
 # Hilbert Clock
 
-[![Hilbert Clock](https://nebelmesser.com/hilbert/img/screen.png)](https://nebelmesser.com/hilbert/clock.html)
+[![Hilbert Clock](img/screen.png)](https://nebelmesser.com/hilbert/clock.html)
 
 A single-file clock that draws a time range as a 2D space-filling curve.
 [Open the live map](https://nebelmesser.com/hilbert/clock.html)
@@ -11,8 +11,11 @@ grids work too), one cell per time step. Cells that are consecutive in time stay
 adjacent on screen, so an interval always shows up as a compact blob rather than
 a scattered set of pixels.
 
+## Inspiration
 
-### Ranges
+[![Hilbert's Curve: Is infinite math useful?](https://img.youtube.com/vi/3s7h2MHQtxc/0.jpg)](https://www.youtube.com/watch?v=3s7h2MHQtxc)
+
+## Ranges
 
 `D` / `M` / `Y` are the current day, month and year and follow the wall clock
 (they roll over at midnight). `Unix` is 0 … 2038-01-19, the signed 32-bit epoch,
@@ -24,7 +27,7 @@ The grid (`w × h` and the duration of one cell) is picked per range by a scorin
 pass that balances the aspect ratio of the available space, the number of cells,
 leftover cells, and whether a parent cell can still be refined down to ≤ 1 s.
 
-### Zoom
+## Zoom
 
 A second panel refines one block of the parent map: the yellow box marks a
 Hilbert-tree leaf around *now*, diagonals connect it to the inset, and each
@@ -36,13 +39,13 @@ step dismisses the inset and leaves a single panel.
 Both panels are laid out to fit the viewport without scrolling — side by side or
 stacked, whichever gives more map area (portrait always stacks).
 
-### Keyboard
+## Keyboard
 
 | Key | Action |
 | --- | --- |
-| `D` `M` `Y` `U` | day / month / year / Unix epoch |
+| `D` `M` `Y` `U`, `R` | day / month / year / Unix epoch / Range |
 | `+` `−` or `↑` `↓` | zoom in / out |
-| `F` | hide the top bar |
+| `F` or double click/tap | hide the top bar |
 
 ### Notes
 
@@ -50,6 +53,7 @@ stacked, whichever gives more map area (portrait always stacks).
   `localStorage`.
 - `?time=YYYY-MM-DD-HH:MM:SS` starts the clock at a given moment (it keeps
   ticking from there) — handy for screenshots and debugging.
+- `?speedup=X` speeds up rendering X times
 - All colors and most tunables are CSS custom properties in `:root`; the
   JavaScript reads them, so retheming means editing the stylesheet only.
 
