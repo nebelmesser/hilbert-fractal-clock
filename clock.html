@@ -125,6 +125,12 @@
       overflow-wrap: anywhere;
     }
     body.fit-mode .map-block { margin: 0; }
+    .map-block {
+      touch-action: manipulation; /* double-tap toggles F; do not zoom the page */
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
     /* Fit tiles: caption under the map. Row shares height; column shares width. */
     #map-stack.fit-col {
       display: flex;
@@ -477,6 +483,8 @@
   const RESIZE_DEBOUNCE_MS = 120; // wait after the last resize before relayout
   const ORIENT_RELAYOUT_MS = 200; // delay after orientationchange
   const ARB_DEBOUNCE_MS = 1000; // Custom dates: relayout this long after the last input
+  const CHROME_DBL_MS = 450; // double-click / double-tap on a panel toggles F
+  const CHROME_DBL_PX = 40; // max travel between the two taps (fat-finger slop)
   const LOOP_MIN_MS = 16; // tick floor (~60 Hz)
   const LOOP_MAX_MS = 1000; // tick ceiling (never wait more than 1s)
   const GRID_ORIENT_EPS = 0.08; // swap w×h if pickGrid disagrees with a clearly tall/wide target
@@ -3520,6 +3528,29 @@
     lastLayoutHeight = 0;
     relayout();
   }
+
+  let chromeDblAt = 0, chromeDblX = 0, chromeDblY = 0, chromeDblType = "";
+  stackEl.addEventListener("pointerdown", (e) => { // double-click or double-tap a panel = F
+    if (!e.isPrimary) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (!e.target.closest(".map-block")) return;
+    // iOS/Android emit a compatibility mouse click after a tap — that is not a second tap
+    if (e.pointerType === "mouse" && chromeDblType === "touch" &&
+        (e.timeStamp - chromeDblAt) < 700) return;
+    const dt = e.timeStamp - chromeDblAt;
+    const dist = Math.hypot(e.clientX - chromeDblX, e.clientY - chromeDblY);
+    if (chromeDblAt && chromeDblType === e.pointerType && dt <= CHROME_DBL_MS && dist <= CHROME_DBL_PX) {
+      chromeDblAt = 0;
+      chromeDblType = "";
+      e.preventDefault();
+      setChromeHidden(!chromeHidden);
+      return;
+    }
+    chromeDblAt = e.timeStamp;
+    chromeDblX = e.clientX;
+    chromeDblY = e.clientY;
+    chromeDblType = e.pointerType;
+  }, { passive: false });
 
   function syncFullscreenClass() { // browser fullscreen: hide panel captions and relayout like F
     const on = pageIsFullscreen();
