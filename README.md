@@ -2,9 +2,11 @@
 
 [![Hilbert Clock](img/screen.png)](https://nebelmesser.com/hilbert/clock.html)
 
-A single-file clock that draws a time range as a 2D space-filling curve.
+A clock that draws a time range as a 2D space-filling curve.
 [Open the live map](https://nebelmesser.com/hilbert/clock.html)
-or the local `hilbert/clock.html` — no build step, no dependencies, no network.
+or the built `hilbert/clock.html`. Source lives in `hilbert/app/` (TypeScript +
+Vite, same layout as `4d/app/`). Behaviour is specified in
+[`requirements.md`](requirements.md).
 
 Time runs along a generalized Hilbert curve ("gilbert", so non-power-of-two
 grids work too), one cell per time step. Cells that are consecutive in time stay
@@ -43,7 +45,7 @@ stacked, whichever gives more map area (portrait always stacks).
 
 | Key | Action |
 | --- | --- |
-| `D` `M` `Y` `U`, `R` | day / month / year / Unix epoch / Range |
+| `D` `M` `Y` `U` | day / month / year / Unix epoch |
 | `+` `−` or `↑` `↓` | zoom in / out |
 | `F` or double click/tap | hide the top bar |
 
@@ -54,8 +56,20 @@ stacked, whichever gives more map area (portrait always stacks).
 - `?time=YYYY-MM-DD-HH:MM:SS` starts the clock at a given moment (it keeps
   ticking from there) — handy for screenshots and debugging.
 - `?speedup=X` speeds up rendering X times
-- All colors and most tunables are CSS custom properties in `:root`; the
-  JavaScript reads them, so retheming means editing the stylesheet only.
+- All colors and most tunables are CSS custom properties in `:root`
+  (`hilbert/app/src/style.css`); the app reads them, so retheming means
+  editing the stylesheet only.
+- Range is selected with the **Range** button (there is no `R` shortcut).
+
+## Develop
+
+```
+cd hilbert/app
+npm install
+npm run dev      # http://localhost:5173/clock.html
+npm test
+npm run build    # writes ../clock.html and ../assets/clock.{js,css}
+```
 
 ## License
 

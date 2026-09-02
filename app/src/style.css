@@ -1,0 +1,269 @@
+    /* Palette: JS reads these via loadTheme / cssPixel. Tune here, not in JS. */
+    :root {
+      --bg: #000; /* page + surplus-behind-the-map */
+      --fg: #e8e8e8; /* body text, button labels */
+      --muted: #8a8a8a; /* captions under the maps */
+      --btn-border: #2a2a2a; /* idle button + date-input stroke */
+      --btn-active: #2a3a48; /* pressed preset fill */
+      --btn-active-border: #c86a6a; /* pressed preset stroke */
+      --accent: #e8918e; /* pressed preset label */
+      --input-bg: #111; /* Custom date fields */
+      --past: #a6a6a6; /* elapsed cells (not in the live unit) */
+      --future: #161616; /* cells still ahead */
+      --cur-past: #c7a4a4; /* elapsed cells inside the live coarsest unit */
+      --cur-future: #3a2222; /* remaining cells inside the live unit */
+      --head: #ff0000; /* the living cell (now) */
+      --surplus: #000000; /* leftover cells past the range */
+      --label: #6c6c6c; /* labels on filled (past) regions */
+      --label-empty: #5e5e5e; /* labels on empty (future) regions */
+      --label-live: #db0202; /* live-unit label on the filled half */
+      --label-live-empty: #db0202; /* live-unit label on the empty half */
+      --current-outline: rgba(255, 107, 107, 0.5); /* stroke around the live unit */
+      --zoom: rgba(255, 196, 72, 0.95); /* yellow box + inset frame */
+      --zoom-frame-w: 2px; /* ZOOM_FRAME_W — square icons + map frames */
+      --zoom-muted: rgba(255, 196, 72, 0.28); /* disabled zoom icons */
+      --connector: rgba(240, 180, 41, 0.7); /* diagonals: parent box → inset */
+      --bound-0: rgba(255, 255, 255, 0.82); /* inherited higher-unit edges on the inset */
+      --bound-1: rgba(255, 255, 255, 0.55); /* coarsest unit on this map */
+      --bound-2: rgba(255, 255, 255, 0.28); /* middle unit */
+      --bound-3: rgba(197, 197, 197, 0.12); /* 3rd-order / finer-than-label hairlines */
+    }
+    /* Page chrome */
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
+      min-height: 100%;
+    }
+    body { padding: 12px 12px 32px; }
+    /* Landscape phones: shrink chrome so the map keeps the viewport. */
+    @media (orientation: landscape) and (max-height: 540px) {
+      html, body {
+        height: 100%;
+        max-height: 100dvh;
+        max-height: 100svh;
+      }
+      body { padding: 6px 10px 8px; }
+      .top-bar { margin-bottom: 6px; }
+      .controls { margin-bottom: 6px; }
+      .controls button { padding: 6px 10px; min-height: 32px; }
+      .caption { margin: 4px 0 6px; }
+    }
+    /* Fit: both maps on the viewport, no page scroll. Today with one panel still uses this chrome. */
+    html.fit-mode, body.fit-mode {
+      height: 100%;
+      height: 100svh;
+      height: 100dvh;
+      min-height: 100%;
+      min-height: 100svh;
+      max-height: 100dvh;
+      overflow: hidden;
+    }
+    body.fit-mode {
+      display: flex;
+      flex-direction: column;
+      padding: 8px 12px;
+    }
+    body.fit-mode .top-bar { flex: 0 0 auto; margin-bottom: 8px; }
+    body.chrome-hidden .top-bar,
+    body.chrome-hidden .info-link { display: none; } /* F — session only, not in localStorage */
+    body.chrome-hidden .caption,
+    body.is-fullscreen .caption,
+    html:fullscreen .caption,
+    html:-webkit-full-screen .caption { display: none; } /* no range/grid captions in fullscreen / F */
+    body.fit-mode .stage {
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      padding: 8px;
+    }
+    body.fit-mode .caption {
+      margin: 4px 0 0;
+      width: 100%;
+      box-sizing: border-box;
+      overflow-wrap: anywhere;
+    }
+    body.fit-mode .map-block { margin: 0; }
+    .map-block {
+      touch-action: manipulation; /* double-tap toggles F; do not zoom the page */
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    /* Fit tiles: caption under the map. Row shares height; column shares width. */
+    #map-stack.fit-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 28px; /* STACK_COL_GAP — caption stays with its map, not the next tile */
+      max-width: 100%;
+      max-height: 100%;
+      box-sizing: border-box;
+    }
+    #map-stack.fit-row {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      column-gap: var(--stack-row-gap, 12px); /* >= stage pad + frame; JS sets --stack-row-gap */
+      width: 100%;
+      height: 100%;
+      max-width: 100%;
+      max-height: 100%;
+      box-sizing: border-box;
+    }
+    #map-stack.fit-row .map-block,
+    #map-stack.fit-col .map-block {
+      display: grid;
+      grid-template-rows: auto auto;
+      align-content: start;
+      justify-items: stretch;
+      box-sizing: border-box;
+    }
+    /* Presets + Custom dates share one wrapping row. */
+    .top-bar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 8px 18px;
+      margin: 0 auto 10px;
+    }
+    .top-bar .controls { margin: 0; }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: center;
+      margin: 0 auto 10px;
+    }
+    .controls button {
+      appearance: none;
+      background: var(--future);
+      color: var(--fg);
+      border: 1px solid var(--btn-border);
+      padding: 8px 12px;
+      min-height: 36px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .controls button[aria-pressed="true"] {
+      background: var(--cur-future);
+      border-color: var(--btn-active-border);
+      color: var(--accent);
+    }
+    .controls button:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+    .controls .zoom-btns {
+      display: flex;
+      gap: 6px;
+      margin-left: 14px; /* air after Range */
+    }
+    .controls .zoom-btns button {
+      min-width: 36px;
+      padding-left: 10px;
+      padding-right: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .controls .zoom-btns .zoom-icon {
+      box-sizing: border-box;
+      border: var(--zoom-frame-w) solid var(--zoom);
+      background: transparent;
+      pointer-events: none;
+    }
+    .controls .zoom-btns .zoom-icon-sm { width: 8px; height: 8px; } /* zoom in — smaller yellow box */
+    .controls .zoom-btns .zoom-icon-lg { width: 16px; height: 16px; } /* zoom out — larger yellow box */
+    .controls .zoom-btns button:disabled .zoom-icon {
+      border-color: var(--zoom-muted);
+    }
+    .arbitrary {
+      display: none;
+      flex-wrap: nowrap;
+      flex-shrink: 0;
+      gap: 8px;
+      align-items: center;
+      margin: 0;
+    }
+    .arbitrary.open { display: flex; } /* same row as presets when the bar fits; wraps under them otherwise */
+    .arbitrary input {
+      background: var(--input-bg);
+      color: var(--fg);
+      border: 1px solid var(--btn-border);
+      padding: 6px 8px;
+      min-height: 36px;
+      font: inherit;
+      color-scheme: dark;
+    }
+    .stage {
+      position: relative;
+      width: 100%;
+      margin: 0 auto;
+    }
+    /* Map stack: pixel base + vector bounds / labels / highlight. */
+    .map {
+      position: relative;
+      margin: 0 auto;
+      overflow: visible;
+      background: var(--bg);
+    }
+    .map canvas {
+      display: block;
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+    .map .layer-base { image-rendering: pixelated; image-rendering: crisp-edges; }
+    .caption {
+      margin: 6px 0 14px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+    /* Yellow zoom leaders: parent box → inset, no hit testing. */
+    .connectors {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      pointer-events: none;
+      z-index: 4;
+    }
+    .connectors line {
+      stroke: var(--connector);
+      stroke-width: 1; /* hairline leaders; raise if they vanish on a retina phone */
+    }
+    .map-block { margin: 0 auto; }
+    .info-link {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 20;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--btn-border);
+      border-radius: 50%;
+      color: var(--muted);
+      text-decoration: none;
+      font-style: italic;
+      font-size: 15px;
+      line-height: 1;
+      background: var(--bg);
+    }
+    .info-link:hover { color: var(--fg); border-color: var(--muted); }

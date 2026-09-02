@@ -23,8 +23,6 @@
   <meta name="twitter:title" content="Hilbert Fractal Clock">
   <meta name="twitter:description" content="A clock that maps time onto a 2D Hilbert curve. Consecutive moments stay adjacent, so an interval appears as a compact region rather than scattered pixels.">
   <meta name="twitter:image" content="https://nebelmesser.com/hilbert/img/preview.png">
-  <script type="module" src="./assets/clock.js"></script>
-  <link rel="stylesheet" href="./assets/clock.css">
 </head>
 <body class="fit-mode">
   <a class="info-link" href="https://nebelmesser.com/hilbert/" aria-label="About Hilbert Clock">i</a>
@@ -39,5 +37,6 @@
     <svg class="connectors" id="connectors"></svg>
     <div id="map-stack"></div>
   </div>
+  <script type="module" src="./src/main.ts"></script>
 </body>
 </html>
