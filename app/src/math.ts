@@ -3,6 +3,18 @@ export function sign(v: number): number {
   return v > 0 ? 1 : v < 0 ? -1 : 0;
 }
 
+/** Greatest common divisor; at least 1. */
+export function gcd(a: number, b: number): number {
+  a = Math.abs(a | 0);
+  b = Math.abs(b | 0);
+  while (b) {
+    const t = a % b;
+    a = b;
+    b = t;
+  }
+  return a || 1;
+}
+
 /** Inclusive clamp to [a, b]. */
 export function clamp(v: number, a: number, b: number): number {
   return Math.max(a, Math.min(b, v));

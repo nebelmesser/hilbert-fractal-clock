@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { INSET_MAX_D, MIN_CELLS, MS_DAY, MS_SEC, UNIX32_END } from '../constants';
+import { gcd } from '../math';
 import { GridPlanner } from './GridPlanner';
 
 describe('GridPlanner', () => {
@@ -21,6 +22,31 @@ describe('GridPlanner', () => {
     if (grid.cellDur > INSET_MAX_D) {
       expect(planner.isZoomableDur(grid.cellDur)).toBe(true);
     }
+  });
+
+  it('tiles a civil day as an exact rectangle with 24 equal hours', () => {
+    const planner = new GridPlanner();
+    const grid = planner.pickGrid(MS_DAY, 1.2, 800);
+    expect(grid.leftover).toBe(0);
+    expect(grid.w * grid.h).toBe(grid.cells);
+    expect(grid.cells % 24).toBe(0);
+    expect(grid.cells * grid.cellDur).toBe(MS_DAY);
+    expect(planner.dayCanonicalAspect(grid.w, grid.h)).toBe(true);
+    expect(planner.dayHourTiles(grid.w, grid.h)).toBe(true);
+  });
+
+  it('reuses a small set of day aspects instead of a new ratio per slot', () => {
+    const planner = new GridPlanner();
+    const families = new Set<string>();
+    for (const aspect of [0.7, 0.9, 1.1, 1.2, 1.33, 1.5, 1.8]) {
+      const g = planner.pickGrid(MS_DAY, aspect, 800);
+      expect(g.leftover).toBe(0);
+      expect(planner.dayCanonicalAspect(g.w, g.h)).toBe(true);
+      const d = gcd(g.w, g.h);
+      const a = g.w / d, b = g.h / d;
+      families.add(Math.min(a, b) + ':' + Math.max(a, b));
+    }
+    expect(families.size).toBeLessThanOrEqual(5);
   });
 
   it('treats 1s and k²×{0.1,0.25,0.5,1}s parent cells as zoomable', () => {

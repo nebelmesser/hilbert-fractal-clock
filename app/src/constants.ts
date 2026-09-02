@@ -42,6 +42,19 @@ export const SCORE_FINE_DUR_BONUS = -0.12; // cellDur is 1s / 0.5 / 0.25 / 0.1
 export const SCORE_ZOOMABLE_BONUS = -0.55; // parent cell refines to 0.1–1s
 export const SCORE_NOT_ZOOMABLE = 1.2; // parent >1s that cannot refine
 export const SCORE_WHOLE_SEC_BONUS = -0.12; // zoomable parent whose cell is a whole second
+export const SCORE_DAY_RECT_BONUS = -2.8; // civil day: leftover 0, 24 | cells, exact 86400s, canonical aspect
+export const SCORE_DAY_HOUR_TILE = -0.4; // w×h can be tiled by 24 hour rectangles (6×4, 8×3, …)
+export const SCORE_DAY_LEFTOVER = 2.4; // leftover / uneven hours / non-canonical aspect on a civil day
+export const DAY_ASPECTS: Array<[number, number]> = [ // familiar day rectangles; both orientations
+  [1, 1],
+  [4, 3], [3, 4],
+  [3, 2], [2, 3],
+  [2, 1], [1, 2],
+  [16, 9], [9, 16],
+];
+export const DAY_HOUR_TILES: Array<[number, number]> = [ // 24 = fw×fh; hour tile is (w/fw)×(h/fh)
+  [8, 3], [6, 4], [4, 6], [3, 8],
+];
 
 // Boundary / label units. Changing these adds/drops strokes and which unit is lettered.
 export const UNIT_MIN_CELL_SPAN = 2.2; // unit typical must span at least this many cells

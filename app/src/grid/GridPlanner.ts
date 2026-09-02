@@ -1,9 +1,12 @@
 import {
-  ASPECT_MAX, ASPECT_MIN, CELL_CAP_SLACK, FACTOR_MIN, FINE_CELL_DURS,
+  ASPECT_MAX, ASPECT_MIN, CELL_CAP_SLACK, DAY_ASPECTS, DAY_HOUR_TILES,
+  FACTOR_MIN, FINE_CELL_DURS,
   GRID_ORIENT_EPS, GRID_SEARCH_SPAN_FRAC, GRID_SEARCH_SPAN_MIN,
   INSET_CELL_DURS, INSET_MAX_D, INSET_MIN_D, MAX_CELLS, MAX_CELLS_HARD,
-  MIN_CELL_PX, MIN_CELLS, MIN_CSS_PX, MS_SEC, NICE_DIMS, NICE_DURS,
-  POW2_SIDE_HI, POW2_SIDE_LO, SCORE_COUNT_WEIGHT, SCORE_EXACT_BONUS,
+  MIN_CELL_PX, MIN_CELLS, MIN_CSS_PX, MS_DAY, MS_HOUR, MS_SEC, NICE_DIMS, NICE_DURS,
+  POW2_SIDE_HI, POW2_SIDE_LO, SCORE_COUNT_WEIGHT, SCORE_DAY_HOUR_TILE,
+  SCORE_DAY_LEFTOVER, SCORE_DAY_RECT_BONUS,
+  SCORE_EXACT_BONUS,
   SCORE_FINE_DUR_BONUS, SCORE_LEFTOVER_WEIGHT, SCORE_NEAR_SQUARE_HI,
   SCORE_NEAR_SQUARE_LO, SCORE_NICE_DIM_BONUS, SCORE_NOT_ZOOMABLE,
   SCORE_ODD_PENALTY, SCORE_POW2_CELLS, SCORE_PREFER_DUR_BONUS,
@@ -12,7 +15,7 @@ import {
   UNIX32_END, ZOOM_CSS_SLACK, ZOOM_K_DUR_EPS, ZOOM_KS, ZOOM_MIN_AREA,
   ZOOM_RES_MAX,
 } from '../constants';
-import { clamp } from '../math';
+import { clamp, gcd } from '../math';
 import type { CellBox, GridSpec, InsetPlan } from '../types';
 
 const NICE_DIM_SET = new Set(NICE_DIMS);
@@ -123,10 +126,57 @@ export class GridPlanner {
     return MS_SEC;
   }
 
+  /** True for a 24h civil day — prefer exact w×h tilings of 86400s. */
+  isCivilDay(durationMs: number): boolean {
+    return Math.abs(durationMs - MS_DAY) < 1;
+  }
+
+  /** 24 hour-rectangles tile this grid (6×4, 8×3, and swaps). */
+  dayHourTiles(w: number, h: number): boolean {
+    for (let i = 0; i < DAY_HOUR_TILES.length; i++) {
+      const fw = DAY_HOUR_TILES[i][0], fh = DAY_HOUR_TILES[i][1];
+      if (w % fw === 0 && h % fh === 0) return true;
+    }
+    return false;
+  }
+
+  /** Reduced w:h is a familiar day rectangle (4:3, 3:2, 1:1, 2:1, 16:9). */
+  dayCanonicalAspect(w: number, h: number): boolean {
+    const g = gcd(w, h);
+    const rw = w / g, rh = h / g;
+    for (let i = 0; i < DAY_ASPECTS.length; i++) {
+      if (rw === DAY_ASPECTS[i][0] && rh === DAY_ASPECTS[i][1]) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Exact day rectangles: cellDur | 1h so 24 hours have the same cell count,
+   * leftover 0, w×h = 86400s / cellDur.
+   */
+  forEachDayRect(maxCells: number, fn: (w: number, h: number, cells: number, cellDur: number) => void): void {
+    const lim = Math.floor(Math.sqrt(MS_HOUR));
+    for (let i = 1; i <= lim; i++) {
+      if (MS_HOUR % i !== 0) continue;
+      const durs = i === MS_HOUR / i ? [i] : [i, MS_HOUR / i];
+      for (let d = 0; d < durs.length; d++) {
+        const cellDur = durs[d];
+        const cells = MS_DAY / cellDur;
+        if (cells < MIN_CELLS || cells > maxCells) continue;
+        if (cellDur > INSET_MAX_D && !this.isZoomableDur(cellDur)) continue;
+        const pairs = this.factorPairs(cells);
+        for (let p = 0; p < pairs.length; p++) {
+          if (this.dayCanonicalAspect(pairs[p][0], pairs[p][1])) fn(pairs[p][0], pairs[p][1], cells, cellDur);
+        }
+      }
+    }
+  }
+
   /** Lower is better; must stay 1s-zoomable when the parent cell is > 1s. */
   scoreGrid(
     w: number, h: number, cells: number, cellDur: number,
     targetAspect: number, targetCells: number, preferDur: number | null,
+    dayPrefer = false,
   ): number {
     const n = w * h;
     const leftover = n - cells;
@@ -154,18 +204,29 @@ export class GridPlanner {
       zoomBonus = this.isZoomableDur(cellDur) ? SCORE_ZOOMABLE_BONUS : SCORE_NOT_ZOOMABLE;
       if (Math.abs(cellDur / MS_SEC - Math.round(cellDur / MS_SEC)) < 1e-6) zoomBonus += SCORE_WHOLE_SEC_BONUS;
     }
-    return aspectErr + exactBonus + oddPenalty + quadPenalty + squareBonus + countErr * SCORE_COUNT_WEIGHT + niceDimBonus + preferBonus + fineBonus + zoomBonus;
+    let dayBonus = 0;
+    if (dayPrefer) {
+      const exactDay = leftover === 0 && cells % 24 === 0 && Math.abs(cells * cellDur - MS_DAY) < 0.5;
+      if (exactDay && this.dayCanonicalAspect(w, h)) {
+        dayBonus = SCORE_DAY_RECT_BONUS;
+        if (this.dayHourTiles(w, h)) dayBonus += SCORE_DAY_HOUR_TILE;
+      } else {
+        dayBonus = SCORE_DAY_LEFTOVER;
+      }
+    }
+    return aspectErr + exactBonus + oddPenalty + quadPenalty + squareBonus + countErr * SCORE_COUNT_WEIGHT + niceDimBonus + preferBonus + fineBonus + zoomBonus + dayBonus;
   }
 
   /** Keep the lowest scoreGrid among legal factorizations. */
   consider(
     best: GridSpec | null, w: number, h: number, cells: number, cellDur: number,
     targetAspect: number, targetCells: number, preferDur: number | null, maxCells: number,
+    dayPrefer = false,
   ): GridSpec | null {
     if (w < FACTOR_MIN || h < FACTOR_MIN) return best;
     if (w * h < cells) return best;
     if (w * h > (maxCells || MAX_CELLS) * CELL_CAP_SLACK) return best;
-    const score = this.scoreGrid(w, h, cells, cellDur, targetAspect, targetCells, preferDur);
+    const score = this.scoreGrid(w, h, cells, cellDur, targetAspect, targetCells, preferDur, dayPrefer);
     if (!best || score < (best.score ?? Infinity)) {
       return { w, h, cells, cellDur, leftover: w * h - cells, score };
     }
@@ -215,6 +276,7 @@ export class GridPlanner {
     if (unixGrid) return unixGrid;
     let best: GridSpec | null = null;
     const cap = cellCap && cellCap > 0 ? cellCap : this.maxCellsFor(cssWidth, targetAspect);
+    const dayPrefer = !cellCap && this.isCivilDay(durationMs);
     const preferDur = cellCap && cellCap > 0
       ? this.pickInsetPreferDur(durationMs, cap)
       : this.pickFineCellDur(durationMs, cssWidth, targetAspect);
@@ -223,6 +285,18 @@ export class GridPlanner {
       : Math.min(cap, Math.max(MIN_CELLS, durationMs / MS_SEC));
     const durs = this.candidateDurs(durationMs);
     if (preferDur) durs.add(preferDur);
+    const take = (
+      w: number, h: number, cells: number, cellDur: number, maxCells: number,
+    ) => {
+      best = this.consider(best, w, h, cells, cellDur, targetAspect, targetCells, preferDur, maxCells, dayPrefer);
+    };
+    if (dayPrefer) {
+      this.forEachDayRect(Math.max(cap, MAX_CELLS) * CELL_CAP_SLACK, (w, h, cells, cellDur) => {
+        const needsZoom = cellDur > INSET_MAX_D;
+        const durCap = needsZoom || this.isZoomableDur(cellDur) ? Math.max(cap, MAX_CELLS_HARD) : cap;
+        take(w, h, cells, cellDur, durCap);
+      });
+    }
     durs.forEach((cellDur) => {
       if (!(cellDur > 0)) return;
       const cells = Math.ceil(durationMs / cellDur - 1e-9);
@@ -237,7 +311,7 @@ export class GridPlanner {
 
       const pairs = this.factorPairs(cells);
       for (let p = 0; p < pairs.length; p++) {
-        best = this.consider(best, pairs[p][0], pairs[p][1], cells, cellDur, targetAspect, targetCells, preferDur, durCap);
+        take(pairs[p][0], pairs[p][1], cells, cellDur, durCap);
       }
 
       const approxW = Math.max(FACTOR_MIN, Math.round(Math.sqrt(cells * targetAspect)));
@@ -246,13 +320,13 @@ export class GridPlanner {
       const hi = approxW + span;
       for (let w = lo; w <= hi; w++) {
         const h = Math.ceil(cells / w);
-        best = this.consider(best, w, h, cells, cellDur, targetAspect, targetCells, preferDur, durCap);
+        take(w, h, cells, cellDur, durCap);
       }
       for (let ni = 0; ni < NICE_DIMS.length; ni++) {
         const w = NICE_DIMS[ni];
         const h = Math.ceil(cells / w);
-        best = this.consider(best, w, h, cells, cellDur, targetAspect, targetCells, preferDur, durCap);
-        best = this.consider(best, h, w, cells, cellDur, targetAspect, targetCells, preferDur, durCap);
+        take(w, h, cells, cellDur, durCap);
+        take(h, w, cells, cellDur, durCap);
       }
     });
     if (!best) {
