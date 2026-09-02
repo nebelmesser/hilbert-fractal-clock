@@ -63,6 +63,8 @@ export const LABEL_OUTLIER_RATIO = 0.55; // one much-smaller slot may use a smal
 export const LABEL_LIVE_MS = 10 * MS_SEC; // live glyph place; raise to hold still, lower to chase the fill
 export const LABEL_FONT = '500 '; // CSS font-weight prefix before the px size
 export const LABEL_FONT_STACK = 'px system-ui, sans-serif';
+export const LABEL_ALPHA = 0.38; // past glyph opacity vs the block fill (black on pastel). Raise = stronger type.
+export const LABEL_EMPTY_ALPHA = 0.34; // future glyph opacity vs --future (white on dark)
 
 // Zoom / overlay. Changing these changes the yellow box, inset k×D, and frames.
 export const INSET_MIN_D = 1; // finest inset cell: 1ms
@@ -90,12 +92,17 @@ export const ZOOM_FRAME_OUTSET = 1; // yellow box sits this many px outside the 
 export const INSET_FRAME_OUT = 2; // yellow frame sits this far outside the canvas (ZOOM_FRAME_OUTSET + ZOOM_FRAME_W/2)
 
 // Bound strokes (CSS px). Changing these changes edge weight; hair also uses --bound-3.
-export const BOUND_W = [0.6, 0.4, 0.2]; // [coarsest, middle, fallback] when the level is not a hairline
+export const BOUND_W = [0.6, 0.4, 0.2]; // [L1, L2, fallback] CSS px when the level is not a hairline
 export const INHERIT_W = 2; // units coarser than this map (May|June on a day inset)
 export const HAIR_GAIN = 0.5; // unclamped width when a unit-block is HAIR_REF_PX across
 export const HAIR_REF_PX = 10; // "normal" block size. Raise = thinner lines on small blocks
 export const HAIR_MIN = 0.16; // never thinner than this
 export const HAIR_MAX = 0.8; // never thicker than this (3rd-order / finer-than-label)
+export const BOUND_ALPHA_1 = 0.55; // L1 opacity vs the cell fill. Raise = stronger hour/day edges
+export const BOUND_ALPHA_2 = 0.28; // L2 opacity vs the cell fill
+export const BOUND_ALPHA_3 = 0.12; // L3/hair opacity vs the cell fill
+export const BOUND_LUMA_SPLIT = 70; // fill luma below this → white overlay (future); else black overlay (past)
+export const PAST_SAT_DIP = 0.5; // HSL sat cut at ramp midpoint (4t(1−t)). 0 = linear; 1 = gray mid.
 
 // Fit / chrome. Changing these changes packing, overflow shrink, and F / resize timing.
 export const STAGE_MIN_W = 160; // floor for stage / probe width

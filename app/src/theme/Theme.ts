@@ -1,12 +1,14 @@
+import { BOUND_ALPHA_1, BOUND_ALPHA_2, BOUND_ALPHA_3, LABEL_ALPHA, LABEL_EMPTY_ALPHA, PAST_SAT_DIP } from '../constants';
 import type { ThemeColors } from '../types';
 
 /** Read map / label / bound colors from :root CSS custom properties. */
 export class Theme {
   colors: ThemeColors = {
-    past: 0, future: 0, curPast: 0, curFuture: 0, head: 0, surplus: 0,
-    label: '', labelEmpty: '', labelLive: '', labelLiveEmpty: '',
+    past: 0, pastFrom: 0, pastSatDip: PAST_SAT_DIP, future: 0, curPast: 0, curFuture: 0, head: 0, surplus: 0,
+    labelAlpha: LABEL_ALPHA, labelEmptyAlpha: LABEL_EMPTY_ALPHA, labelLive: '', labelLiveEmpty: '',
     currentOutline: '', zoom: '',
-    bound0: '', bound1: '', bound2: '', bound3: '',
+    bound0: '',
+    boundAlpha1: BOUND_ALPHA_1, boundAlpha2: BOUND_ALPHA_2, boundAlpha3: BOUND_ALPHA_3,
   };
 
   private probe: HTMLCanvasElement | null = null;
@@ -15,6 +17,12 @@ export class Theme {
   /** Computed :root token. */
   cssVar(name: string): string {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  /** Numeric :root token, or `fallback` if missing / invalid. */
+  cssNumber(name: string, fallback: number): number {
+    const n = parseFloat(this.cssVar(name));
+    return Number.isFinite(n) ? n : fallback;
   }
 
   /** CSS color → little-endian 0xAABBGGRR for ImageData. */
@@ -37,21 +45,23 @@ export class Theme {
   load(): ThemeColors {
     this.colors = {
       past: this.cssPixel('--past'),
+      pastFrom: this.cssPixel('--past-from'),
+      pastSatDip: this.cssNumber('--past-sat-dip', PAST_SAT_DIP),
       future: this.cssPixel('--future'),
       curPast: this.cssPixel('--cur-past'),
       curFuture: this.cssPixel('--cur-future'),
       head: this.cssPixel('--head'),
       surplus: this.cssPixel('--surplus'),
-      label: this.cssVar('--label'),
-      labelEmpty: this.cssVar('--label-empty'),
+      labelAlpha: this.cssNumber('--label-alpha', LABEL_ALPHA),
+      labelEmptyAlpha: this.cssNumber('--label-empty-alpha', LABEL_EMPTY_ALPHA),
       labelLive: this.cssVar('--label-live'),
       labelLiveEmpty: this.cssVar('--label-live-empty'),
       currentOutline: this.cssVar('--current-outline'),
       zoom: this.cssVar('--zoom'),
       bound0: this.cssVar('--bound-0'),
-      bound1: this.cssVar('--bound-1'),
-      bound2: this.cssVar('--bound-2'),
-      bound3: this.cssVar('--bound-3'),
+      boundAlpha1: this.cssNumber('--bound-1-alpha', BOUND_ALPHA_1),
+      boundAlpha2: this.cssNumber('--bound-2-alpha', BOUND_ALPHA_2),
+      boundAlpha3: this.cssNumber('--bound-3-alpha', BOUND_ALPHA_3),
     };
     return this.colors;
   }

@@ -1,9 +1,9 @@
 # Hilbert Clock
 
-[![Hilbert Clock](img/screen.png)](https://nebelmesser.com/hilbert/clock.html)
+[![Hilbert Clock](/img/screen.png)](/hilbert/clock.html)
 
 A clock that draws a time range as a 2D space-filling curve.
-[Open the live map](https://nebelmesser.com/hilbert/clock.html)
+[Open the live map](/hilbert/clock.html)
 or the built `hilbert/clock.html`. Source lives in `hilbert/app/` (TypeScript +
 Vite, same layout as `4d/app/`). Behaviour is specified in
 [`requirements.md`](requirements.md).

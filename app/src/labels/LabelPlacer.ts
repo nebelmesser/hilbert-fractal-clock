@@ -1,4 +1,5 @@
 import { LABEL_FILL, LABEL_FONT, LABEL_FONT_STACK } from '../constants';
+import { boundStrokeFromFill } from '../theme/pastRamp';
 import type { LabelPlace, LabelSlotKind, ThemeColors } from '../types';
 
 /** Visit every maximal axis-aligned rectangle in a binary mask. */
@@ -122,10 +123,12 @@ export class LabelPlacer {
     };
   }
 
-  /** Muted CSS color; live unit uses --label-live*. */
-  labelColor(theme: ThemeColors, onFilled: boolean, live: boolean): string {
+  /**
+   * Live unit stays `--label-live*`. Other glyphs use the block fill plus `--label-*-alpha`.
+   */
+  labelColor(theme: ThemeColors, onFilled: boolean, live: boolean, fill: number): string {
     if (live) return onFilled ? theme.labelLive : theme.labelLiveEmpty;
-    return onFilled ? theme.label : theme.labelEmpty;
+    return boundStrokeFromFill(fill, onFilled ? theme.labelAlpha : theme.labelEmptyAlpha);
   }
 
   /** Full region in timelapse; otherwise filled or empty half of a live unit. */

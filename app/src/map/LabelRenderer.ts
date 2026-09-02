@@ -4,6 +4,7 @@ import {
 } from '../constants';
 import { LabelPlacer, labelSlotKind, maskCentroid } from '../labels/LabelPlacer';
 import { median } from '../math';
+import { l1RampSpan, pastColorAt } from '../theme/pastRamp';
 import type { LabelPlace, LabelSlotKind, MapLayout, ThemeColors } from '../types';
 
 export type LiveLabelCache = {
@@ -41,11 +42,20 @@ type Item = {
 };
 
 /** Draw unit labels: one slot kind per layer, pinned places in timelapse. */
+type LabelRegion = {
+  id: number; idx: number[]; minx: number; miny: number; maxx: number; maxy: number;
+};
+
 export class LabelRenderer {
+  private regions = new WeakMap<MapLayout, { li: number; list: LabelRegion[] }>();
+
   /** Bind the slot placer used for mask → rectangle. */
   constructor(private placer: LabelPlacer) {}
 
-  /** Layer-wide slot (square / 4×3 / 16×9); one font except a single small outlier. */
+  /**
+   * Layer-wide slot (square / 4×3 / 16×9); one font except a single small outlier.
+   * Live glyph stays `--label-live*`. Other glyphs use the block fill plus `--label-*-alpha`.
+   */
   paint(
     ctx: CanvasRenderingContext2D,
     layout: MapLayout,
@@ -58,7 +68,7 @@ export class LabelRenderer {
     labelPlaces: PinnedPlaces | null,
   ): { liveLabel: LiveLabelCache | null; labelPlaces: PinnedPlaces | null } {
     ctx.clearRect(0, 0, cssW, cssH);
-    const { grid, g, levels, labelLevel, cellStart } = layout;
+    const { grid, g, levels, labelLevel, cellStart, levelIds } = layout;
     if (!levels.length) return { liveLabel, labelPlaces };
     const li = labelLevel || 0;
     const unit = levels[li];
@@ -67,6 +77,10 @@ export class LabelRenderer {
     const cw = cssW / grid.w;
     const ch = cssH / grid.h;
     const dur = grid.cellDur;
+    const ids0 = levelIds[0];
+    const curId = levels[0] ? levels[0].index(now) : null;
+    const { minId, maxId, pinkId } = l1RampSpan(ids0, grid.cells, curId);
+    const colorAt = ids0 ? pastColorAt(theme, minId, maxId, pinkId, curId) : null;
     const pending: Pending[] = [];
     const texts: string[] = [];
 
@@ -104,11 +118,16 @@ export class LabelRenderer {
       let onFilled = tMax <= now;
       if (live) onFilled = placed.onFilled;
       else onFilled = tMax <= now;
+      const sample = region.idx[0];
+      const l1 = ids0 ? ids0[sample] : 0;
+      const fill = onFilled
+        ? (colorAt ? colorAt(l1) : theme.past)
+        : (curId != null && l1 === curId ? theme.curFuture : theme.future);
       pending.push({
         text, n: region.idx.length, live, onFilled,
         placeMask: placed.placeMask, bw, bh,
         ox: region.minx, oy: region.miny,
-        color: this.placer.labelColor(theme, onFilled, live),
+        color: this.placer.labelColor(theme, onFilled, live, fill),
       });
     }
 
@@ -196,10 +215,10 @@ export class LabelRenderer {
     return { liveLabel: timeLapse ? liveLabel : nextLive, labelPlaces: nextPlaces };
   }
 
-  /** Cells grouped by unit id, with a bounding box. */
-  private collectRegions(layout: MapLayout, levelIndex: number): Array<{
-    id: number; idx: number[]; minx: number; miny: number; maxx: number; maxy: number;
-  }> {
+  /** Cells grouped by unit id, with a bounding box. Cached — the groups do not move. */
+  private collectRegions(layout: MapLayout, levelIndex: number): LabelRegion[] {
+    const hit = this.regions.get(layout);
+    if (hit && hit.li === levelIndex) return hit.list;
     const { grid, g, levelIds } = layout;
     const ids = levelIds[levelIndex];
     const groups = new Map<number, { id: number; idx: number[]; minx: number; miny: number; maxx: number; maxy: number }>();
@@ -217,6 +236,8 @@ export class LabelRenderer {
       if (x > rec.maxx) rec.maxx = x;
       if (y > rec.maxy) rec.maxy = y;
     }
-    return [...groups.values()];
+    const list = [...groups.values()];
+    this.regions.set(layout, { li: levelIndex, list });
+    return list;
   }
 }

@@ -56,6 +56,7 @@ export class TimeMap {
   _zoomMinute: number | undefined;
   _zoomAspect = 1;
   _lastKey = '';
+  _lastLabelKey = '';
   _liveLabel: LiveLabelCache | null = null;
   _labelPlaces: PinnedPlaces | null = null;
   _tipIdx = -1;
@@ -104,6 +105,7 @@ export class TimeMap {
     this.end = end;
     this.layout = null;
     this._lastKey = '';
+    this._lastLabelKey = '';
     this._liveLabel = null;
     this._labelPlaces = null;
   }
@@ -128,6 +130,7 @@ export class TimeMap {
     this._layoutCanvases();
     this._renderBounds();
     this._lastKey = '';
+    this._lastLabelKey = '';
     this._liveLabel = null;
     this._labelPlaces = null;
     this.tick(this.host.clock.nowMs(), true);
@@ -181,6 +184,7 @@ export class TimeMap {
     this._layoutCanvases();
     this._renderBounds();
     this._lastKey = '';
+    this._lastLabelKey = '';
     this._liveLabel = null;
     this._labelPlaces = null;
     this.tick(this.host.clock.nowMs(), true);
@@ -410,13 +414,14 @@ export class TimeMap {
     this._layoutCanvases();
     this._renderBounds();
     this._lastKey = '';
+    this._lastLabelKey = '';
     this.tick(this.host.clock.nowMs(), true);
   }
 
   /** Fill along the curve up to now; tint the current coarsest unit; redraw labels. */
   tick(now: number, force = false): void {
     if (!this.layout) return;
-    const { grid, levels } = this.layout;
+    const { grid, levels, labelLevel } = this.layout;
     const paintMs = Math.max(1, Math.min(LOOP_MAX_MS, grid.cellDur));
     const nowKey = Math.floor(now / paintMs);
     let curId: number | null = null;
@@ -426,7 +431,13 @@ export class TimeMap {
     const unitChanged = !this._lastKey.endsWith(':' + curId);
     this._lastKey = key;
     this.host.fill.paint(this.ctxBase, this.layout, now, this.host.theme.colors, curId);
-    this._renderLabels(now);
+    this._renderBounds(now, curId);
+    const labelUnit = levels[labelLevel || 0];
+    const labelKey = curId + ':' + (labelUnit ? labelUnit.index(now) : '');
+    if (force || !this.host.clock.timeLapse || labelKey !== this._lastLabelKey) {
+      this._renderLabels(now);
+      this._lastLabelKey = labelKey;
+    }
     if (force || unitChanged) this._renderOverlay(now, curId);
   }
 
@@ -461,10 +472,16 @@ export class TimeMap {
     this._renderOverlay(now, curId);
   }
 
-  /** Stroke unit edges on the bounds layer. */
-  private _renderBounds(): void {
+  /** Stroke unit edges on the bounds layer; L2/L3 follow the past ramp. */
+  private _renderBounds(now?: number, curId?: number | null): void {
     if (!this.layout) return;
-    this.host.bounds.paint(this.ctxBounds, this.layout, this.cssW, this.cssH, this.host.theme.colors);
+    const t = now ?? this.host.clock.nowMs();
+    let id = curId;
+    if (id === undefined) {
+      id = this.layout.levels[0] && t >= this.start && t < this.end
+        ? this.layout.levels[0].index(t) : null;
+    }
+    this.host.bounds.paint(this.ctxBounds, this.layout, this.cssW, this.cssH, this.host.theme.colors, t, id);
   }
 
   /** Timelapse: still retint live/past; places stay on the full region. */

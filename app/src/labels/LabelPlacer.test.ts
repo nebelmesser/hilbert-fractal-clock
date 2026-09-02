@@ -2,18 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { LabelPlacer } from './LabelPlacer';
 
 const theme = {
-  past: 0, future: 0, curPast: 0, curFuture: 0, head: 0, surplus: 0,
-  label: 'past', labelEmpty: 'empty', labelLive: 'live', labelLiveEmpty: 'live-empty',
-  currentOutline: '', zoom: '', bound0: '', bound1: '', bound2: '', bound3: '',
+  past: 0, pastFrom: 0, pastSatDip: 0.5, future: 0xff161616, curPast: 0, curFuture: 0, head: 0, surplus: 0,
+  labelAlpha: 0.38, labelEmptyAlpha: 0.34,
+  labelLive: 'live', labelLiveEmpty: 'live-empty',
+  currentOutline: '', zoom: '', bound0: '', boundAlpha1: 0.55, boundAlpha2: 0.28, boundAlpha3: 0.12,
 };
 
+const pink = 0xffa4a4c7;
+
 describe('LabelPlacer', () => {
-  it('picks live / past / empty colors', () => {
+  it('keeps the live glyph red and derives others from the block fill', () => {
     const p = new LabelPlacer();
-    expect(p.labelColor(theme, true, false)).toBe('past');
-    expect(p.labelColor(theme, false, false)).toBe('empty');
-    expect(p.labelColor(theme, true, true)).toBe('live');
-    expect(p.labelColor(theme, false, true)).toBe('live-empty');
+    expect(p.labelColor(theme, true, true, pink)).toBe('live');
+    expect(p.labelColor(theme, false, true, theme.future)).toBe('live-empty');
+    expect(p.labelColor(theme, true, false, pink)).toBe('rgba(0,0,0,0.38)');
+    expect(p.labelColor(theme, false, false, theme.future)).toBe('rgba(255,255,255,0.34)');
   });
 
   it('keeps placeMask on the full region in timelapse', () => {

@@ -108,21 +108,23 @@ export type LabelPlace = { x: number; y: number; w: number; h: number; area: num
 
 export type ThemeColors = {
   past: number;
+  pastFrom: number;
+  pastSatDip: number;
   future: number;
   curPast: number;
   curFuture: number;
   head: number;
   surplus: number;
-  label: string;
-  labelEmpty: string;
+  labelAlpha: number;
+  labelEmptyAlpha: number;
   labelLive: string;
   labelLiveEmpty: string;
   currentOutline: string;
   zoom: string;
   bound0: string;
-  bound1: string;
-  bound2: string;
-  bound3: string;
+  boundAlpha1: number;
+  boundAlpha2: number;
+  boundAlpha3: number;
 };
 
 export type TimeRange = { start: number; end: number };

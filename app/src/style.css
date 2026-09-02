@@ -8,14 +8,16 @@
       --btn-active-border: #c86a6a; /* pressed preset stroke */
       --accent: #e8918e; /* pressed preset label */
       --input-bg: #111; /* Custom date fields */
-      --past: #a6a6a6; /* elapsed cells (not in the live unit) */
+      --past: #a6a6a6; /* fallback elapsed fill if there is no first-level ladder */
+      --past-from: #5e5f62; /* far-past end of the ramp; reached only when the range is mostly elapsed */
+      --past-sat-dip: 0.5; /* mute HSL saturation at the ramp midpoint; 0 = linear, 1 = gray mid */
       --future: #161616; /* cells still ahead */
-      --cur-past: #c7a4a4; /* elapsed cells inside the live coarsest unit */
+      --cur-past: #d0a5a5; /* live first-level fill + pink end of the past ramp */
       --cur-future: #3a2222; /* remaining cells inside the live unit */
       --head: #ff0000; /* the living cell (now) */
       --surplus: #000000; /* leftover cells past the range */
-      --label: #6c6c6c; /* labels on filled (past) regions */
-      --label-empty: #5e5e5e; /* labels on empty (future) regions */
+      --label-alpha: 0.38; /* past glyph: black overlay on the block fill */
+      --label-empty-alpha: 0.34; /* future glyph: white overlay on --future */
       --label-live: #db0202; /* live-unit label on the filled half */
       --label-live-empty: #db0202; /* live-unit label on the empty half */
       --current-outline: rgba(255, 107, 107, 0.5); /* stroke around the live unit */
@@ -24,9 +26,9 @@
       --zoom-muted: rgba(255, 196, 72, 0.28); /* disabled zoom icons */
       --connector: rgba(240, 180, 41, 0.7); /* diagonals: parent box → inset */
       --bound-0: rgba(255, 255, 255, 0.82); /* inherited higher-unit edges on the inset */
-      --bound-1: rgba(255, 255, 255, 0.55); /* coarsest unit on this map */
-      --bound-2: rgba(255, 255, 255, 0.28); /* middle unit */
-      --bound-3: rgba(197, 197, 197, 0.12); /* 3rd-order / finer-than-label hairlines */
+      --bound-1-alpha: 0.55; /* L1 opacity vs the cell fill (white on dark, black on past) */
+      --bound-2-alpha: 0.28; /* L2 */
+      --bound-3-alpha: 0.12; /* L3 / hair */
     }
     /* Page chrome */
     * { box-sizing: border-box; }
