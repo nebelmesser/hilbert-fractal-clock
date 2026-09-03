@@ -1,6 +1,6 @@
-# Hilbert Clock
+# Hilbert Fractal Clock
 
-[![Hilbert Clock](/img/screen.png)](/hilbert/clock.html)
+[![Hilbert Fractal Clock](/img/screen.png)](/hilbert/clock.html)
 
 A clock that draws a time range as a 2D space-filling curve.
 [Open the live map](/hilbert/clock.html)
