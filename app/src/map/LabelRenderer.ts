@@ -4,7 +4,7 @@ import {
 } from '../constants';
 import { LabelPlacer, labelSlotKind, maskCentroid } from '../labels/LabelPlacer';
 import { median } from '../math';
-import { l1RampSpan, pastColorAt } from '../theme/pastRamp';
+import { pastColorAt, rampCurId, resolveRamp } from '../theme/pastRamp';
 import type { LabelPlace, LabelSlotKind, MapLayout, ThemeColors } from '../types';
 
 export type LiveLabelCache = {
@@ -77,9 +77,10 @@ export class LabelRenderer {
     const cw = cssW / grid.w;
     const ch = cssH / grid.h;
     const dur = grid.cellDur;
-    const ids0 = levelIds[0];
-    const curId = levels[0] ? levels[0].index(now) : null;
-    const { minId, maxId, pinkId } = l1RampSpan(ids0, grid.cells, curId);
+    const t0 = layout.ramp ? layout.ramp.start : 0;
+    const t1 = layout.ramp ? layout.ramp.end : Number.POSITIVE_INFINITY;
+    const curId = rampCurId(layout, now, t0, t1);
+    const { ids: ids0, minId, maxId, pinkId } = resolveRamp(layout, curId);
     const colorAt = ids0 ? pastColorAt(theme, minId, maxId, pinkId, curId) : null;
     const pending: Pending[] = [];
     const texts: string[] = [];

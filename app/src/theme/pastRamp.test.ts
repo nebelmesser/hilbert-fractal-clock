@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ThemeColors } from '../types';
-import { boundStrokeFromFill, l1RampSpan, lerpHslPacked, lerpPacked, packedToRgb, pastBlockPixel, pastColorAt, rgbToHsl } from './pastRamp';
+import type { MapLayout, TimeUnit } from '../types';
+import { boundStrokeFromFill, l1RampSpan, lerpHslPacked, lerpPacked, packedToRgb, pastBlockPixel, pastColorAt, resolveRamp, rgbToHsl } from './pastRamp';
 
 const violet = 0xffb8689a; // #9a68b8
 const pink = 0xffa4a4c7; // #c7a4a4
@@ -71,6 +72,19 @@ describe('pastRamp', () => {
     expect(at(0)).toBe(pastBlockPixel(theme, 0, 0, 15, 4, 4));
     expect(at(4)).toBe(pink);
     expect(at(0)).toBe(at(0));
+  });
+
+  it('resolveRamp on an inset keeps the parent first-level span', () => {
+    const unit = { index: (t: number) => Math.floor(t / 3600) } as TimeUnit;
+    const parentIds = Int32Array.from([0, 0, 1, 1]);
+    const insetIds = Int32Array.from([10, 11, 12]);
+    const layout = {
+      grid: { cells: 3 },
+      levelIds: [insetIds],
+      ramp: { minId: 0, maxId: 23, ids: parentIds, unit, start: 0, end: 86400 },
+    } as MapLayout;
+    expect(resolveRamp(layout, 5)).toEqual({ ids: parentIds, minId: 0, maxId: 23, pinkId: 5 });
+    expect(resolveRamp(layout, null)).toEqual({ ids: parentIds, minId: 0, maxId: 23, pinkId: 23 });
   });
 
   it('boundStrokeFromFill uses white on dark fills and black on pastels', () => {

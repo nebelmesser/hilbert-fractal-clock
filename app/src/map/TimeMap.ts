@@ -6,6 +6,7 @@ import type { GridPlanner } from '../grid/GridPlanner';
 import { clamp } from '../math';
 import type { ClockTime } from '../time/ClockTime';
 import { formatDur, formatMoment, formatRange } from '../time/format';
+import { l1RampSpan, rampCurId } from '../theme/pastRamp';
 import { fillUnitIds } from '../time/units';
 import type { Theme } from '../theme/Theme';
 import type {
@@ -176,7 +177,22 @@ export class TimeMap {
     const inherit = higherBoundUnits(levels, cellDur).map((u) =>
       fillUnitIds(u, cellDur, grid.cells, cellStart),
     );
-    this.layout = { grid, g, levels, levelIds, labelLevel, cssWidth, cellStart, inherit };
+    const parentUnit = parentLayout.levels[0];
+    const parentDur = parentLayout.grid.cellDur;
+    const parentSpan = parentUnit && parentLayout.levelIds[0]
+      ? l1RampSpan(parentLayout.levelIds[0], parentLayout.grid.cells, null)
+      : null;
+    const ramp = parentUnit && parentSpan
+      ? {
+        minId: parentSpan.minId,
+        maxId: parentSpan.maxId,
+        ids: fillUnitIds(parentUnit, cellDur, grid.cells, cellStart),
+        unit: parentUnit,
+        start: parentLayout.cellStart[0],
+        end: parentLayout.cellStart[parentLayout.grid.cells - 1] + parentDur,
+      }
+      : undefined;
+    this.layout = { grid, g, levels, levelIds, labelLevel, cssWidth, cellStart, inherit, ramp };
     const keepW = this.tileW;
     const keepH = this.tileH;
     this.tileW = keepW > 0 ? keepW : cssWidth;
@@ -424,21 +440,22 @@ export class TimeMap {
     const { grid, levels, labelLevel } = this.layout;
     const paintMs = Math.max(1, Math.min(LOOP_MAX_MS, grid.cellDur));
     const nowKey = Math.floor(now / paintMs);
-    let curId: number | null = null;
-    if (levels[0] && now >= this.start && now < this.end) curId = levels[0].index(now);
-    const key = nowKey + ':' + curId;
+    const localCurId = levels[0] && now >= this.start && now < this.end
+      ? levels[0].index(now) : null;
+    const curId = rampCurId(this.layout, now, this.start, this.end);
+    const key = nowKey + ':' + curId + ':' + localCurId;
     if (!force && key === this._lastKey) return;
-    const unitChanged = !this._lastKey.endsWith(':' + curId);
+    const unitChanged = !this._lastKey.endsWith(':' + localCurId);
     this._lastKey = key;
     this.host.fill.paint(this.ctxBase, this.layout, now, this.host.theme.colors, curId);
     this._renderBounds(now, curId);
     const labelUnit = levels[labelLevel || 0];
-    const labelKey = curId + ':' + (labelUnit ? labelUnit.index(now) : '');
+    const labelKey = curId + ':' + localCurId + ':' + (labelUnit ? labelUnit.index(now) : '');
     if (force || !this.host.clock.timeLapse || labelKey !== this._lastLabelKey) {
       this._renderLabels(now);
       this._lastLabelKey = labelKey;
     }
-    if (force || unitChanged) this._renderOverlay(now, curId);
+    if (force || unitChanged) this._renderOverlay(now, localCurId);
   }
 
   /** Coarsest unit at now, or the next if that unit is almost the whole map. */
@@ -478,8 +495,7 @@ export class TimeMap {
     const t = now ?? this.host.clock.nowMs();
     let id = curId;
     if (id === undefined) {
-      id = this.layout.levels[0] && t >= this.start && t < this.end
-        ? this.layout.levels[0].index(t) : null;
+      id = rampCurId(this.layout, t, this.start, this.end);
     }
     this.host.bounds.paint(this.ctxBounds, this.layout, this.cssW, this.cssH, this.host.theme.colors, t, id);
   }

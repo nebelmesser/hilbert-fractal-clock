@@ -1,6 +1,6 @@
 import { BOUND_W, HAIR_GAIN, HAIR_MAX, HAIR_MIN, HAIR_REF_PX, INHERIT_W } from '../constants';
 import { clamp } from '../math';
-import { boundStrokeFromFill, l1RampSpan, pastColorAt } from '../theme/pastRamp';
+import { boundStrokeFromFill, pastColorAt, resolveRamp } from '../theme/pastRamp';
 import type { MapLayout, ThemeColors } from '../types';
 
 /** Flat edge list: cell index + CSS segment, 5 numbers per edge. */
@@ -66,9 +66,8 @@ export class BoundRenderer {
     const cw = cssW / grid.w;
     const ch = cssH / grid.h;
     const labelLi = layout.labelLevel || 0;
-    const ids0 = levelIds[0];
+    const { ids: ids0, minId, maxId, pinkId } = resolveRamp(layout, curId);
     const dur = grid.cellDur;
-    const { minId, maxId, pinkId } = l1RampSpan(ids0, grid.cells, curId);
     const colorAt = ids0 ? pastColorAt(theme, minId, maxId, pinkId, curId) : null;
     const futureKey = 0x7fffffff;
     const curFutureKey = 0x7ffffffe;

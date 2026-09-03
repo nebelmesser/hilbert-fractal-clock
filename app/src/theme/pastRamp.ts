@@ -1,6 +1,6 @@
 import { BOUND_LUMA_SPLIT } from '../constants';
 import { clamp } from '../math';
-import type { ThemeColors } from '../types';
+import type { MapLayout, ThemeColors } from '../types';
 
 /**
  * First-level id span used by the violet→pink past ramp.
@@ -23,6 +23,32 @@ export function l1RampSpan(
   }
   const pinkId = curId != null && curId >= minId ? curId : maxId;
   return { minId, maxId, pinkId };
+}
+
+/**
+ * First-level ids and span for the past ramp.
+ * An inset uses the parent's L1 so a given hour/day is the same color on both panels.
+ */
+export function resolveRamp(
+  layout: MapLayout,
+  curId: number | null,
+): { ids: Int32Array | undefined; minId: number; maxId: number; pinkId: number } {
+  if (layout.ramp) {
+    const { minId, maxId, ids } = layout.ramp;
+    const pinkId = curId != null && curId >= minId ? curId : maxId;
+    return { ids, minId, maxId, pinkId };
+  }
+  const ids = layout.levelIds[0];
+  return { ids, ...l1RampSpan(ids, layout.grid.cells, curId) };
+}
+
+/** Live first-level id for the shared ramp, or the map's own L1. */
+export function rampCurId(layout: MapLayout, now: number, mapStart: number, mapEnd: number): number | null {
+  if (layout.ramp) {
+    const { unit, start, end } = layout.ramp;
+    return now >= start && now < end ? unit.index(now) : null;
+  }
+  return layout.levels[0] && now >= mapStart && now < mapEnd ? layout.levels[0].index(now) : null;
 }
 
 /** Blend two little-endian 0xAABBGGRR pixels in sRGB. */

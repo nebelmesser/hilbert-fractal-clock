@@ -90,6 +90,16 @@ export type ZoomLock = {
   cssW: number;
 };
 
+/** Parent L1 ramp shared with the inset so zoom fill matches the main map. */
+export type RampShare = {
+  minId: number;
+  maxId: number;
+  ids: Int32Array;
+  unit: TimeUnit;
+  start: number;
+  end: number;
+};
+
 export type MapLayout = {
   grid: GridSpec;
   g: HilbertGrid;
@@ -100,6 +110,7 @@ export type MapLayout = {
   cssHeight?: number;
   cellStart: Float64Array;
   inherit?: Int32Array[];
+  ramp?: RampShare;
 };
 
 export type LabelSlotKind = 'square' | '4x3' | '16x9';

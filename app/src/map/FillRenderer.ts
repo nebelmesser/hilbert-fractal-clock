@@ -1,4 +1,4 @@
-import { l1RampSpan, pastColorAt } from '../theme/pastRamp';
+import { pastColorAt, resolveRamp } from '../theme/pastRamp';
 import type { MapLayout, ThemeColors } from '../types';
 
 type FillBuf = { w: number; h: number; img: ImageData; buf: Uint32Array };
@@ -19,21 +19,20 @@ export class FillRenderer {
     theme: ThemeColors,
     curId: number | null,
   ): void {
-    const { grid, g, levelIds, cellStart } = layout;
+    const { grid, g, cellStart } = layout;
     const rec = this.buffer(ctx, grid.w, grid.h);
     const buf = rec.buf;
     buf.fill(theme.surplus);
-    const ids = levelIds[0];
+    const { ids, minId, maxId, pinkId } = resolveRamp(layout, curId);
     const n = grid.cells;
     const dur = grid.cellDur;
-    const { minId, maxId, pinkId } = l1RampSpan(ids, n, curId);
     const colorAt = ids ? pastColorAt(theme, minId, maxId, pinkId, curId) : null;
     for (let i = 0; i < n; i++) {
       const p = g.xs[i] + g.ys[i] * grid.w;
       const t0 = cellStart[i];
       const inCur = curId != null && ids && ids[i] === curId;
       if (now >= t0 + dur) {
-        buf[p] = colorAt
+        buf[p] = colorAt && ids
           ? colorAt(ids[i])
           : (inCur ? theme.curPast : theme.past);
       } else if (now >= t0) {
