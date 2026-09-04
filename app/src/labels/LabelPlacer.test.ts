@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LabelPlacer } from './LabelPlacer';
+import { LabelPlacer, eraseFrameBand, preferLargerHalf } from './LabelPlacer';
 
 const theme = {
   past: 0, pastFrom: 0, pastSatDip: 0.5, future: 0xff161616, curPast: 0, curFuture: 0, head: 0, surplus: 0,
@@ -43,5 +43,53 @@ describe('LabelPlacer', () => {
     });
     expect(placed.placeMask).toBe(past);
     expect(placed.onFilled).toBe(true);
+  });
+
+  it('keeps the larger half when a rect cuts the region, like a live unit', () => {
+    const base = new Uint8Array([1, 1, 1, 1, 1]);
+    const outBox = new Uint8Array([1, 1, 1, 0, 0]);
+    const inBox = new Uint8Array([0, 0, 0, 1, 1]);
+    expect([...preferLargerHalf(base, outBox, inBox)]).toEqual([...outBox]);
+  });
+
+  it('leaves the mask alone when the zoom box does not split the region', () => {
+    const base = new Uint8Array([1, 1, 0]);
+    const outBox = new Uint8Array([1, 1, 1]);
+    const inBox = new Uint8Array([0, 0, 0]);
+    expect(preferLargerHalf(base, outBox, inBox)).toBe(base);
+  });
+
+  it('places the glyph slot entirely in the larger half of a cut region', () => {
+    const p = new LabelPlacer();
+    const bw = 8, bh = 4;
+    const full = new Uint8Array(bw * bh).fill(1);
+    const inBox = new Uint8Array(bw * bh);
+    const outBox = new Uint8Array(bw * bh);
+    for (let y = 0; y < bh; y++) {
+      for (let x = 0; x < bw; x++) {
+        if (y < 1) inBox[y * bw + x] = 1;
+        else outBox[y * bw + x] = 1;
+      }
+    }
+    const mask = preferLargerHalf(full, outBox, inBox);
+    const place = p.largestSlotInMask(mask, bw, bh, '16x9', bw / 2, bh / 2);
+    expect(place.area).toBeGreaterThan(0);
+    expect(place.y).toBeGreaterThanOrEqual(1);
+    expect(place.y + place.h).toBeLessThanOrEqual(bh);
+  });
+
+  it('erases the zoom-frame band so the slot sits in the remaining interior', () => {
+    const p = new LabelPlacer();
+    const bw = 16, bh = 10;
+    const full = new Uint8Array(bw * bh).fill(1);
+    const box = { x: 0, y: 0, w: 16, h: 10 };
+    const pad = 2;
+    const mask = eraseFrameBand(full, bw, bh, 0, 0, box, pad);
+    const place = p.largestSlotInMask(mask, bw, bh, '16x9', bw / 2, bh / 2);
+    expect(place.area).toBeGreaterThan(0);
+    expect(place.x).toBeGreaterThanOrEqual(pad);
+    expect(place.y).toBeGreaterThanOrEqual(pad);
+    expect(place.x + place.w).toBeLessThanOrEqual(bw - pad);
+    expect(place.y + place.h).toBeLessThanOrEqual(bh - pad);
   });
 });

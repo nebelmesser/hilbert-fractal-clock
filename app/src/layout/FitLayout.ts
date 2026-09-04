@@ -1,7 +1,7 @@
 import {
   ASPECT_MAX, ASPECT_MIN, AVAIL_H_CHROME, AVAIL_H_MIN, CAPTION_FALLBACK,
   CAPTION_MIN, CAPTION_PAD, CHROME_BASE, CHROME_TOP_GAP, FIT_PAD, FIT_SHRINK,
-  FIT_SHRINK_EPS, GRID_ORIENT_EPS, OVERFLOW_SLACK, PACK_CLOSE_PX,
+  FIT_SHRINK_EPS, GRID_ORIENT_EPS, OVERFLOW_SLACK, PACK_CLOSE_PX, PINCH_SCALE_EPS,
   PORTRAIT_MIN_H_OVER_W, STAGE_GUTTER, STAGE_MIN_W, STAGE_USE_CLIENT_MIN,
   STACK_COL_GAP, STACK_ROW_FRAME, TILE_MIN,
 } from '../constants';
@@ -66,10 +66,11 @@ export class FitLayout {
   /** Height left under the top bar; take the largest of Chrome's conflicting height APIs. */
   viewportRemainH(): number {
     const vv = window.visualViewport;
+    const pinch = !!(vv && Math.abs(vv.scale - 1) > PINCH_SCALE_EPS);
     let viewH = Math.max(
       window.innerHeight || 0,
       (document.documentElement && document.documentElement.clientHeight) || 0,
-      (vv && vv.height) || 0,
+      (!pinch && vv && vv.height) || 0,
     );
     const sw = screen && screen.width, sh = screen && screen.height;
     if (this.pageIsPortrait() && sw && sh && sh > sw && window.innerWidth > 0) {

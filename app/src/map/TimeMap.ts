@@ -450,7 +450,9 @@ export class TimeMap {
     this.host.fill.paint(this.ctxBase, this.layout, now, this.host.theme.colors, curId);
     this._renderBounds(now, curId);
     const labelUnit = levels[labelLevel || 0];
-    const labelKey = curId + ':' + localCurId + ':' + (labelUnit ? labelUnit.index(now) : '');
+    const z = this.zoomBox;
+    const zkey = z ? z.x + ',' + z.y + ',' + z.w + 'x' + z.h : '';
+    const labelKey = curId + ':' + localCurId + ':' + (labelUnit ? labelUnit.index(now) : '') + ':' + zkey;
     if (force || !this.host.clock.timeLapse || labelKey !== this._lastLabelKey) {
       this._renderLabels(now);
       this._lastLabelKey = labelKey;
@@ -479,6 +481,9 @@ export class TimeMap {
 
   /** Yellow box on the parent; range is the inset interval. */
   setZoomHighlight(box: CellBox | null, range?: TimeRange | null): void {
+    const prev = this.zoomBox;
+    const boxChanged = !prev !== !box ||
+      !!(box && prev && (box.x !== prev.x || box.y !== prev.y || box.w !== prev.w || box.h !== prev.h));
     this.zoomBox = box;
     this.zoomRange = range || null;
     if (!box && !this.zoomRange) this._zoomLock = null;
@@ -487,6 +492,7 @@ export class TimeMap {
     const curId = this.layout.levels[0] && now >= this.start && now < this.end
       ? this.layout.levels[0].index(now) : null;
     this._renderOverlay(now, curId);
+    if (boxChanged) this._renderLabels(now);
   }
 
   /** Stroke unit edges on the bounds layer; L2/L3 follow the past ramp. */
@@ -506,7 +512,7 @@ export class TimeMap {
     const next = this.host.labels.paint(
       this.ctxLabels, this.layout, this.cssW, this.cssH, now,
       this.host.theme.colors, this.host.clock.timeLapse,
-      this._liveLabel, this._labelPlaces,
+      this._liveLabel, this._labelPlaces, this.zoomBox,
     );
     this._liveLabel = next.liveLabel;
     this._labelPlaces = next.labelPlaces;

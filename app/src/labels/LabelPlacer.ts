@@ -1,6 +1,6 @@
-import { LABEL_FILL, LABEL_FONT, LABEL_FONT_STACK } from '../constants';
+import { LABEL_FILL, LABEL_FONT, LABEL_FONT_STACK, ZOOM_FRAME_OUTSET, ZOOM_FRAME_W } from '../constants';
 import { boundStrokeFromFill } from '../theme/pastRamp';
-import type { LabelPlace, LabelSlotKind, ThemeColors } from '../types';
+import type { CellBox, LabelPlace, LabelSlotKind, ThemeColors } from '../types';
 
 /** Visit every maximal axis-aligned rectangle in a binary mask. */
 export function forEachHistRect(
@@ -61,6 +61,69 @@ export function slotRatios(kind: LabelSlotKind): Array<[number, number]> {
   if (kind === 'square') return [[1, 1]];
   if (kind === '4x3') return [[4, 3]];
   return [[16, 9]];
+}
+
+/** Cell is inside the axis-aligned zoom box. */
+export function cellInBox(x: number, y: number, box: CellBox): boolean {
+  return x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h;
+}
+
+/**
+ * Same rule as the live unit: keep the larger of two complementary halves.
+ * If the cut does not split `base`, return `base` unchanged.
+ */
+export function preferLargerHalf(base: Uint8Array, a: Uint8Array, b: Uint8Array): Uint8Array {
+  let nA = 0, nB = 0;
+  for (let i = 0; i < base.length; i++) {
+    if (!base[i]) continue;
+    if (a[i]) nA++;
+    else if (b[i]) nB++;
+  }
+  if (!nA || !nB) return base;
+  const keepA = nA >= nB;
+  const out = new Uint8Array(base.length);
+  for (let i = 0; i < base.length; i++) {
+    if (base[i] && (keepA ? a[i] : b[i])) out[i] = 1;
+  }
+  return out;
+}
+
+/** Cell sits on the zoom-box rim (inside or just outside), `pad` cells thick. */
+export function cellInFrameBand(x: number, y: number, box: CellBox, pad: number): boolean {
+  if (pad < 1) return false;
+  const x0 = box.x, x1 = box.x + box.w, y0 = box.y, y1 = box.y + box.h;
+  const distX = x < x0 ? x0 - x : x >= x1 ? x - (x1 - 1) : 0;
+  const distY = y < y0 ? y0 - y : y >= y1 ? y - (y1 - 1) : 0;
+  const cheb = Math.max(distX, distY);
+  if (cheb > pad) return false;
+  const inside = x >= x0 && x < x1 && y >= y0 && y < y1;
+  if (inside) {
+    return Math.min(x - x0, x1 - 1 - x, y - y0, y1 - 1 - y) < pad;
+  }
+  return cheb >= 1;
+}
+
+/** Drop the frame band from a region mask; return `mask` if that would empty it. */
+export function eraseFrameBand(
+  mask: Uint8Array, bw: number, bh: number, ox: number, oy: number, box: CellBox, pad: number,
+): Uint8Array {
+  const out = new Uint8Array(mask);
+  let kept = 0;
+  for (let i = 0; i < out.length; i++) {
+    if (!out[i]) continue;
+    const x = ox + (i % bw);
+    const y = oy + ((i / bw) | 0);
+    if (cellInFrameBand(x, y, box, pad)) out[i] = 0;
+    else kept++;
+  }
+  return kept ? out : mask;
+}
+
+/** Stroke-width band in cells so a glyph slot cannot sit on the yellow frame. */
+export function zoomFramePadCells(cellW: number, cellH: number): number {
+  const px = Math.max(16, ZOOM_FRAME_W + ZOOM_FRAME_OUTSET * 2);
+  const cell = Math.min(cellW, cellH);
+  return Math.max(1, Math.ceil(px / Math.max(1e-6, cell)));
 }
 
 /** Centre of mass of filled mask cells. */

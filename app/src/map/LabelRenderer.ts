@@ -2,10 +2,10 @@ import {
   LABEL_FALLBACK_PX, LABEL_FIT_PAD, LABEL_FONT, LABEL_FONT_STACK,
   LABEL_LIVE_MS, LABEL_MAX_PX, LABEL_OUTLIER_RATIO, LABEL_TINY_FRAC,
 } from '../constants';
-import { LabelPlacer, labelSlotKind, maskCentroid } from '../labels/LabelPlacer';
+import { LabelPlacer, cellInBox, eraseFrameBand, labelSlotKind, maskCentroid, preferLargerHalf, zoomFramePadCells } from '../labels/LabelPlacer';
 import { median } from '../math';
 import { pastColorAt, rampCurId, resolveRamp } from '../theme/pastRamp';
-import type { LabelPlace, LabelSlotKind, MapLayout, ThemeColors } from '../types';
+import type { CellBox, LabelPlace, LabelSlotKind, MapLayout, ThemeColors } from '../types';
 
 export type LiveLabelCache = {
   slot: number;
@@ -15,6 +15,7 @@ export type LiveLabelCache = {
   oy: number;
   onFilled: boolean;
   kind: LabelSlotKind;
+  zoomKey: string;
 };
 
 export type PinnedPlaces = Map<string, { place: LabelPlace; kind: LabelSlotKind }>;
@@ -66,6 +67,7 @@ export class LabelRenderer {
     timeLapse: boolean,
     liveLabel: LiveLabelCache | null,
     labelPlaces: PinnedPlaces | null,
+    zoomBox: CellBox | null = null,
   ): { liveLabel: LiveLabelCache | null; labelPlaces: PinnedPlaces | null } {
     ctx.clearRect(0, 0, cssW, cssH);
     const { grid, g, levels, labelLevel, cellStart, levelIds } = layout;
@@ -95,10 +97,13 @@ export class LabelRenderer {
       const full = new Uint8Array(bw * bh);
       const past = new Uint8Array(bw * bh);
       const future = new Uint8Array(bw * bh);
+      const inBox = zoomBox ? new Uint8Array(bw * bh) : null;
+      const outBox = zoomBox ? new Uint8Array(bw * bh) : null;
       let nPast = 0, nFuture = 0, tMin = Infinity, tMax = -Infinity;
       for (let k = 0; k < region.idx.length; k++) {
         const i = region.idx[k];
-        const mi = (g.ys[i] - region.miny) * bw + (g.xs[i] - region.minx);
+        const x = g.xs[i], y = g.ys[i];
+        const mi = (y - region.miny) * bw + (x - region.minx);
         full[mi] = 1;
         const t0 = cellStart[i];
         const t1 = t0 + dur;
@@ -111,11 +116,23 @@ export class LabelRenderer {
           future[mi] = 1;
           nFuture++;
         }
+        if (inBox && outBox && zoomBox) {
+          if (cellInBox(x, y, zoomBox)) inBox[mi] = 1;
+          else outBox[mi] = 1;
+        }
       }
       const live = now >= tMin && now < tMax;
       const placed = this.placer.placeMaskForRegion({
         timeLapse, live, unitId: unit.id, full, past, future, nPast, nFuture,
       });
+      // Zoom frame cuts the region like now cuts a live unit: keep the larger half,
+      // then drop the rim so the slot cannot sit on the yellow stroke.
+      let placeMask = (inBox && outBox)
+        ? preferLargerHalf(placed.placeMask, outBox, inBox)
+        : placed.placeMask;
+      if (zoomBox) {
+        placeMask = eraseFrameBand(placeMask, bw, bh, region.minx, region.miny, zoomBox, zoomFramePadCells(cw, ch));
+      }
       let onFilled = tMax <= now;
       if (live) onFilled = placed.onFilled;
       else onFilled = tMax <= now;
@@ -126,7 +143,7 @@ export class LabelRenderer {
         : (curId != null && l1 === curId ? theme.curFuture : theme.future);
       pending.push({
         text, n: region.idx.length, live, onFilled,
-        placeMask: placed.placeMask, bw, bh,
+        placeMask, bw, bh,
         ox: region.minx, oy: region.miny,
         color: this.placer.labelColor(theme, onFilled, live, fill),
       });
@@ -134,12 +151,13 @@ export class LabelRenderer {
 
     const kind = labelSlotKind(texts);
     const liveSlot = Math.floor(now / LABEL_LIVE_MS);
+    const zoomKey = zoomBox ? zoomBox.x + ',' + zoomBox.y + ',' + zoomBox.w + 'x' + zoomBox.h : '';
     const items: Item[] = [];
     let nextLive = liveLabel;
     let nextPlaces = labelPlaces;
     for (let r = 0; r < pending.length; r++) {
       const p = pending[r];
-      const placeKey = p.ox + ':' + p.oy + ':' + p.text;
+      const placeKey = p.ox + ':' + p.oy + ':' + p.text + ':' + zoomKey;
       const pinned = timeLapse && nextPlaces && nextPlaces.get(placeKey);
       if (pinned && pinned.kind === kind) {
         items.push({ text: p.text, n: p.n, color: p.color, place: pinned.place, ox: p.ox, oy: p.oy });
@@ -148,7 +166,7 @@ export class LabelRenderer {
       const cached = nextLive;
       if (!timeLapse && p.live && cached && cached.slot === liveSlot && cached.text === p.text &&
           cached.ox === p.ox && cached.oy === p.oy &&
-          cached.onFilled === p.onFilled && cached.kind === kind) {
+          cached.onFilled === p.onFilled && cached.kind === kind && cached.zoomKey === zoomKey) {
         items.push({ text: p.text, n: p.n, color: p.color, place: cached.place, ox: cached.ox, oy: cached.oy });
         continue;
       }
@@ -156,7 +174,7 @@ export class LabelRenderer {
       const place = this.placer.largestSlotInMask(p.placeMask, p.bw, p.bh, kind, mid.x, mid.y);
       const item = { text: p.text, n: p.n, color: p.color, place, ox: p.ox, oy: p.oy };
       if (!timeLapse && p.live) {
-        nextLive = { slot: liveSlot, text: p.text, place, ox: p.ox, oy: p.oy, onFilled: p.onFilled, kind };
+        nextLive = { slot: liveSlot, text: p.text, place, ox: p.ox, oy: p.oy, onFilled: p.onFilled, kind, zoomKey };
       }
       if (timeLapse) {
         if (!nextPlaces) nextPlaces = new Map();

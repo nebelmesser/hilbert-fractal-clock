@@ -1,7 +1,7 @@
 import {
   ARB_DEBOUNCE_MS, ASPECT_MAX, ASPECT_MIN, AVAIL_H_MIN, CAPTION_FALLBACK,
   INSET_MAX_D, LOOP_MAX_MS, LOOP_MIN_MS, MIN_CSS_PX, MS_MIN, ORIENT_RELAYOUT_MS,
-  PROBE_ROW_CAP, RESIZE_DEBOUNCE_MS, RESIZE_EPS, STAGE_GUTTER, STAGE_MIN_W,
+  PROBE_ROW_CAP, PINCH_SCALE_EPS, RESIZE_DEBOUNCE_MS, RESIZE_EPS, STAGE_GUTTER, STAGE_MIN_W,
   TILE_MIN, WIDE_STAGE_RATIO, ZOOM_KEEP_AREA_HI, ZOOM_KEEP_AREA_LO, ZOOM_MIN_AREA,
   ZOOM_IDS,
 } from '../constants';
@@ -59,6 +59,7 @@ export class ClockApp {
   private lastNavStamp = '';
   private lastLayoutWidth = 0;
   private lastLayoutHeight = 0;
+  private lastVisibleHeight = 0;
   private resizeTimer = 0;
   private arbTimer = 0;
   private pendingResetZoom = false;
@@ -85,6 +86,7 @@ export class ClockApp {
     this.chrome = new ChromeController(this.stackEl, () => {
       this.lastLayoutWidth = 0;
       this.lastLayoutHeight = 0;
+      this.lastVisibleHeight = 0;
       this.relayout();
     });
     this.host = {
@@ -284,7 +286,8 @@ export class ClockApp {
     const now = this.clock.nowMs();
     const range = rangeForMode(this.mode, now, this.arbitrary);
     this.lastLayoutWidth = this.layout.stageWidth();
-    this.lastLayoutHeight = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    this.lastLayoutHeight = this.layoutViewportHeight();
+    this.lastVisibleHeight = this.visibleHeight();
     const main = this.ensureSlot(0).map;
     main.setRange(range.start, range.end);
     this.lastZoomKey = '';
@@ -609,16 +612,57 @@ export class ClockApp {
     this.arbTimer = window.setTimeout(() => this.applyArbitraryFromInputs(), ARB_DEBOUNCE_MS);
   }
 
-  /** Ignore sub-RESIZE_EPS jitter (mobile chrome hide). */
+  /** Layout viewport height — innerHeight does not change during pinch-zoom. */
+  private layoutViewportHeight(): number {
+    return window.innerHeight || document.documentElement.clientHeight || 0;
+  }
+
+  /** Visible viewport height (URL bar / pinch). */
+  private visibleHeight(): number {
+    const vv = window.visualViewport;
+    return (vv && vv.height) || this.layoutViewportHeight();
+  }
+
+  /** Browser pinch-zoom: visualViewport.scale moved off 1. */
+  private isPinchZoom(): boolean {
+    const vv = window.visualViewport;
+    return !!(vv && Math.abs(vv.scale - 1) > PINCH_SCALE_EPS);
+  }
+
+  /**
+   * Pinch shrinks visualViewport.width while innerWidth stays put.
+   * Distinguishes pinch (first frame may still report scale=1) from the URL bar.
+   */
+  private isPinchVisualWidth(): boolean {
+    const vv = window.visualViewport;
+    const lw = window.innerWidth || document.documentElement.clientWidth || 0;
+    return !!(vv && lw > 0 && vv.width < lw * (1 - PINCH_SCALE_EPS));
+  }
+
+  /** Ignore sub-RESIZE_EPS jitter (mobile chrome hide). Skip pinch-zoom. */
   private scheduleRelayout(resetZoom = false): void {
+    if (this.isPinchZoom()) {
+      clearTimeout(this.resizeTimer);
+      this.pendingResetZoom = false;
+      return;
+    }
     if (resetZoom) this.pendingResetZoom = true;
     clearTimeout(this.resizeTimer);
     this.resizeTimer = window.setTimeout(() => {
-      const w = this.layout.stageWidth();
-      const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-      if (Math.abs(w - this.lastLayoutWidth) < RESIZE_EPS && Math.abs(h - this.lastLayoutHeight) < RESIZE_EPS) {
+      if (this.isPinchZoom()) {
         this.pendingResetZoom = false;
-        requestAnimationFrame(() => this.redrawConnectors());
+        return;
+      }
+      const w = this.layout.stageWidth();
+      const layoutH = this.layoutViewportHeight();
+      const visH = this.visibleHeight();
+      const layoutSame =
+        Math.abs(w - this.lastLayoutWidth) < RESIZE_EPS &&
+        Math.abs(layoutH - this.lastLayoutHeight) < RESIZE_EPS;
+      const visSame = Math.abs(visH - this.lastVisibleHeight) < RESIZE_EPS;
+      if (layoutSame && (visSame || this.isPinchVisualWidth())) {
+        this.pendingResetZoom = false;
+        if (visSame) requestAnimationFrame(() => this.redrawConnectors());
         return;
       }
       if (this.pendingResetZoom) this.forgetZoomOnResize();
@@ -634,6 +678,7 @@ export class ClockApp {
     document.body.classList.toggle('is-fullscreen', on);
     this.lastLayoutWidth = 0;
     this.lastLayoutHeight = 0;
+    this.lastVisibleHeight = 0;
     this.relayout();
   }
 

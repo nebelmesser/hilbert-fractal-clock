@@ -136,6 +136,7 @@ export const FIT_SHRINK_EPS = 0.999; // ignore shrink factors this close to 1
 export const OVERFLOW_SLACK = 1; // px slop before enforceFitInStage counts as overflow
 export const PACK_CLOSE_PX = 6; // pack matches current tiles within this — skip a rebuild
 export const RESIZE_EPS = 8; // ignore viewport jitter smaller than this
+export const PINCH_SCALE_EPS = 0.02; // visualViewport.scale this far from 1 → pinch; do not rebuild maps
 export const RESIZE_DEBOUNCE_MS = 120; // wait after the last resize before relayout
 export const ORIENT_RELAYOUT_MS = 200; // delay after orientationchange
 export const ARB_DEBOUNCE_MS = 1000; // Custom dates: relayout this long after the last input
