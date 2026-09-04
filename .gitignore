@@ -1,0 +1,20 @@
+.DS_Store
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Vite / Vitest
+app/dist/
+app/.vite/
+app/coverage/
+*.tsbuildinfo
+
+# Leftover hashed Vite builds; keep assets/clock.js and clock.css
+assets/clock-*.js
+assets/clock-*.css
+
+.env
+.env.*
+!.env.example
