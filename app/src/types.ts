@@ -111,6 +111,8 @@ export type MapLayout = {
   cellStart: Float64Array;
   inherit?: Int32Array[];
   ramp?: RampShare;
+  /** Parent label unit, drawn large and faint under the inset's own labels. */
+  echo?: { unit: TimeUnit; ids: Int32Array };
 };
 
 export type LabelSlotKind = 'square' | '4x3' | '16x9';

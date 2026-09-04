@@ -1,11 +1,12 @@
 import {
+  LABEL_ECHO_ALPHA, LABEL_ECHO_EMPTY_ALPHA, LABEL_ECHO_LIVE_ALPHA,
   LABEL_FALLBACK_PX, LABEL_FIT_PAD, LABEL_FONT, LABEL_FONT_STACK,
   LABEL_LIVE_MS, LABEL_MAX_PX, LABEL_OUTLIER_RATIO, LABEL_TINY_FRAC,
 } from '../constants';
 import { LabelPlacer, cellInBox, eraseFrameBand, labelSlotKind, maskCentroid, preferLargerHalf, zoomFramePadCells } from '../labels/LabelPlacer';
 import { median } from '../math';
 import { pastColorAt, rampCurId, resolveRamp } from '../theme/pastRamp';
-import type { CellBox, LabelPlace, LabelSlotKind, MapLayout, ThemeColors } from '../types';
+import type { CellBox, LabelPlace, LabelSlotKind, MapLayout, ThemeColors, TimeUnit } from '../types';
 
 export type LiveLabelCache = {
   slot: number;
@@ -42,13 +43,22 @@ type Item = {
   oy: number;
 };
 
-/** Draw unit labels: one slot kind per layer, pinned places in timelapse. */
 type LabelRegion = {
   id: number; idx: number[]; minx: number; miny: number; maxx: number; maxy: number;
 };
 
+type LayerOpts = {
+  zoomBox: CellBox | null;
+  liveLabel: LiveLabelCache | null;
+  labelPlaces: PinnedPlaces | null;
+  keyPrefix: string;
+  capPx: number | null;
+  alphas?: { filled: number; empty: number; live?: number };
+};
+
+/** Draw unit labels: one slot kind per layer, pinned places in timelapse. */
 export class LabelRenderer {
-  private regions = new WeakMap<MapLayout, { li: number; list: LabelRegion[] }>();
+  private regions = new WeakMap<MapLayout, Map<string, LabelRegion[]>>();
 
   /** Bind the slot placer used for mask → rectangle. */
   constructor(private placer: LabelPlacer) {}
@@ -56,6 +66,7 @@ export class LabelRenderer {
   /**
    * Layer-wide slot (square / 4×3 / 16×9); one font except a single small outlier.
    * Live glyph stays `--label-live*`. Other glyphs use the block fill plus `--label-*-alpha`.
+   * On the inset, the parent unit is drawn first (faint, uncapped) under the local labels.
    */
   paint(
     ctx: CanvasRenderingContext2D,
@@ -68,22 +79,75 @@ export class LabelRenderer {
     liveLabel: LiveLabelCache | null,
     labelPlaces: PinnedPlaces | null,
     zoomBox: CellBox | null = null,
-  ): { liveLabel: LiveLabelCache | null; labelPlaces: PinnedPlaces | null } {
+    echoLive: LiveLabelCache | null = null,
+  ): { liveLabel: LiveLabelCache | null; echoLive: LiveLabelCache | null; labelPlaces: PinnedPlaces | null } {
     ctx.clearRect(0, 0, cssW, cssH);
-    const { grid, g, levels, labelLevel, cellStart, levelIds } = layout;
-    if (!levels.length) return { liveLabel, labelPlaces };
-    const li = labelLevel || 0;
-    const unit = levels[li];
-    const regions = this.collectRegions(layout, li);
-    if (!regions.length) return { liveLabel, labelPlaces };
+    const { grid, levels, labelLevel, echo } = layout;
+    if (!grid) return { liveLabel, echoLive, labelPlaces };
     const cw = cssW / grid.w;
     const ch = cssH / grid.h;
-    const dur = grid.cellDur;
     const t0 = layout.ramp ? layout.ramp.start : 0;
     const t1 = layout.ramp ? layout.ramp.end : Number.POSITIVE_INFINITY;
     const curId = rampCurId(layout, now, t0, t1);
     const { ids: ids0, minId, maxId, pinkId } = resolveRamp(layout, curId);
     const colorAt = ids0 ? pastColorAt(theme, minId, maxId, pinkId, curId) : null;
+    let nextPlaces = labelPlaces;
+    let nextEcho = echoLive;
+
+    if (echo) {
+      const painted = this.paintLayer(ctx, layout, echo.unit, echo.ids, cw, ch, now, theme, timeLapse, curId, colorAt, {
+        zoomBox: null,
+        liveLabel: echoLive,
+        labelPlaces: nextPlaces,
+        keyPrefix: 'echo:',
+        capPx: null,
+        alphas: { filled: LABEL_ECHO_ALPHA, empty: LABEL_ECHO_EMPTY_ALPHA, live: LABEL_ECHO_LIVE_ALPHA },
+      });
+      nextEcho = timeLapse ? echoLive : painted.liveLabel;
+      nextPlaces = painted.labelPlaces;
+    }
+
+    if (!levels.length) return { liveLabel, echoLive: nextEcho, labelPlaces: nextPlaces };
+    const li = labelLevel || 0;
+    const unit = levels[li];
+    const ids = layout.levelIds[li];
+    if (!unit || !ids) return { liveLabel, echoLive: nextEcho, labelPlaces: nextPlaces };
+    const local = this.paintLayer(ctx, layout, unit, ids, cw, ch, now, theme, timeLapse, curId, colorAt, {
+      zoomBox,
+      liveLabel,
+      labelPlaces: nextPlaces,
+      keyPrefix: '',
+      capPx: LABEL_MAX_PX,
+    });
+    return {
+      liveLabel: timeLapse ? liveLabel : local.liveLabel,
+      echoLive: nextEcho,
+      labelPlaces: local.labelPlaces,
+    };
+  }
+
+  /**
+   * One unit: collect regions, place slots, draw. Echo passes `capPx: null` and weaker alphas.
+   */
+  private paintLayer(
+    ctx: CanvasRenderingContext2D,
+    layout: MapLayout,
+    unit: TimeUnit,
+    ids: Int32Array,
+    cw: number,
+    ch: number,
+    now: number,
+    theme: ThemeColors,
+    timeLapse: boolean,
+    curId: number | null,
+    colorAt: ((id: number) => number) | null,
+    opts: LayerOpts,
+  ): { liveLabel: LiveLabelCache | null; labelPlaces: PinnedPlaces | null } {
+    const { grid, g, cellStart } = layout;
+    const regions = this.collectRegions(layout, ids, opts.keyPrefix + unit.id);
+    if (!regions.length) return { liveLabel: opts.liveLabel, labelPlaces: opts.labelPlaces };
+    const dur = grid.cellDur;
+    const zoomBox = opts.zoomBox;
     const pending: Pending[] = [];
     const texts: string[] = [];
 
@@ -125,8 +189,6 @@ export class LabelRenderer {
       const placed = this.placer.placeMaskForRegion({
         timeLapse, live, unitId: unit.id, full, past, future, nPast, nFuture,
       });
-      // Zoom frame cuts the region like now cuts a live unit: keep the larger half,
-      // then drop the rim so the slot cannot sit on the yellow stroke.
       let placeMask = (inBox && outBox)
         ? preferLargerHalf(placed.placeMask, outBox, inBox)
         : placed.placeMask;
@@ -137,7 +199,7 @@ export class LabelRenderer {
       if (live) onFilled = placed.onFilled;
       else onFilled = tMax <= now;
       const sample = region.idx[0];
-      const l1 = ids0 ? ids0[sample] : 0;
+      const l1 = ids0Id(layout, sample);
       const fill = onFilled
         ? (colorAt ? colorAt(l1) : theme.past)
         : (curId != null && l1 === curId ? theme.curFuture : theme.future);
@@ -145,7 +207,7 @@ export class LabelRenderer {
         text, n: region.idx.length, live, onFilled,
         placeMask, bw, bh,
         ox: region.minx, oy: region.miny,
-        color: this.placer.labelColor(theme, onFilled, live, fill),
+        color: this.placer.labelColor(theme, onFilled, live, fill, opts.alphas),
       });
     }
 
@@ -153,11 +215,11 @@ export class LabelRenderer {
     const liveSlot = Math.floor(now / LABEL_LIVE_MS);
     const zoomKey = zoomBox ? zoomBox.x + ',' + zoomBox.y + ',' + zoomBox.w + 'x' + zoomBox.h : '';
     const items: Item[] = [];
-    let nextLive = liveLabel;
-    let nextPlaces = labelPlaces;
+    let nextLive = opts.liveLabel;
+    let nextPlaces = opts.labelPlaces;
     for (let r = 0; r < pending.length; r++) {
       const p = pending[r];
-      const placeKey = p.ox + ':' + p.oy + ':' + p.text + ':' + zoomKey;
+      const placeKey = opts.keyPrefix + p.ox + ':' + p.oy + ':' + p.text + ':' + zoomKey;
       const pinned = timeLapse && nextPlaces && nextPlaces.get(placeKey);
       if (pinned && pinned.kind === kind) {
         items.push({ text: p.text, n: p.n, color: p.color, place: pinned.place, ox: p.ox, oy: p.oy });
@@ -210,8 +272,10 @@ export class LabelRenderer {
       if (scored[s].px < fontSize) fontSize = scored[s].px;
     }
     if (!isFinite(fontSize)) fontSize = scored.length ? scored[0].px : LABEL_FALLBACK_PX;
-    fontSize = Math.min(fontSize, LABEL_MAX_PX);
-    outlierPx = Math.min(outlierPx, LABEL_MAX_PX);
+    if (opts.capPx != null) {
+      fontSize = Math.min(fontSize, opts.capPx);
+      outlierPx = Math.min(outlierPx, opts.capPx);
+    }
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -231,16 +295,20 @@ export class LabelRenderer {
       ctx.fillStyle = it.color;
       ctx.fillText(it.text, (it.ox + pr.x + pr.w / 2) * cw, (it.oy + pr.y + pr.h / 2) * ch);
     }
-    return { liveLabel: timeLapse ? liveLabel : nextLive, labelPlaces: nextPlaces };
+    return { liveLabel: timeLapse ? opts.liveLabel : nextLive, labelPlaces: nextPlaces };
   }
 
   /** Cells grouped by unit id, with a bounding box. Cached — the groups do not move. */
-  private collectRegions(layout: MapLayout, levelIndex: number): LabelRegion[] {
-    const hit = this.regions.get(layout);
-    if (hit && hit.li === levelIndex) return hit.list;
-    const { grid, g, levelIds } = layout;
-    const ids = levelIds[levelIndex];
-    const groups = new Map<number, { id: number; idx: number[]; minx: number; miny: number; maxx: number; maxy: number }>();
+  private collectRegions(layout: MapLayout, ids: Int32Array, key: string): LabelRegion[] {
+    let bag = this.regions.get(layout);
+    if (!bag) {
+      bag = new Map();
+      this.regions.set(layout, bag);
+    }
+    const hit = bag.get(key);
+    if (hit) return hit;
+    const { grid, g } = layout;
+    const groups = new Map<number, LabelRegion>();
     for (let i = 0; i < grid.cells; i++) {
       const id = ids[i];
       let rec = groups.get(id);
@@ -256,7 +324,13 @@ export class LabelRenderer {
       if (y > rec.maxy) rec.maxy = y;
     }
     const list = [...groups.values()];
-    this.regions.set(layout, { li: levelIndex, list });
+    bag.set(key, list);
     return list;
   }
+}
+
+/** L1 id for color, from the shared ramp when the inset inherits the parent. */
+function ids0Id(layout: MapLayout, sample: number): number {
+  const ids = layout.ramp ? layout.ramp.ids : layout.levelIds[0];
+  return ids ? ids[sample] : 0;
 }

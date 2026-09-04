@@ -59,6 +59,7 @@ export class TimeMap {
   _lastKey = '';
   _lastLabelKey = '';
   _liveLabel: LiveLabelCache | null = null;
+  _echoLive: LiveLabelCache | null = null;
   _labelPlaces: PinnedPlaces | null = null;
   _tipIdx = -1;
   _cropKey = '';
@@ -108,6 +109,7 @@ export class TimeMap {
     this._lastKey = '';
     this._lastLabelKey = '';
     this._liveLabel = null;
+    this._echoLive = null;
     this._labelPlaces = null;
   }
 
@@ -133,6 +135,7 @@ export class TimeMap {
     this._lastKey = '';
     this._lastLabelKey = '';
     this._liveLabel = null;
+    this._echoLive = null;
     this._labelPlaces = null;
     this.tick(this.host.clock.nowMs(), true);
     if (this.captionEl) {
@@ -192,7 +195,12 @@ export class TimeMap {
         end: parentLayout.cellStart[parentLayout.grid.cells - 1] + parentDur,
       }
       : undefined;
-    this.layout = { grid, g, levels, levelIds, labelLevel, cssWidth, cellStart, inherit, ramp };
+    const parentLabel = parentLayout.levels[parentLayout.labelLevel || 0];
+    const localLabel = levels[labelLevel];
+    const echo = parentLabel && (!localLabel || parentLabel.id !== localLabel.id)
+      ? { unit: parentLabel, ids: fillUnitIds(parentLabel, cellDur, grid.cells, cellStart) }
+      : undefined;
+    this.layout = { grid, g, levels, levelIds, labelLevel, cssWidth, cellStart, inherit, ramp, echo };
     const keepW = this.tileW;
     const keepH = this.tileH;
     this.tileW = keepW > 0 ? keepW : cssWidth;
@@ -202,6 +210,7 @@ export class TimeMap {
     this._lastKey = '';
     this._lastLabelKey = '';
     this._liveLabel = null;
+    this._echoLive = null;
     this._labelPlaces = null;
     this.tick(this.host.clock.nowMs(), true);
     if (this.captionEl) {
@@ -512,9 +521,10 @@ export class TimeMap {
     const next = this.host.labels.paint(
       this.ctxLabels, this.layout, this.cssW, this.cssH, now,
       this.host.theme.colors, this.host.clock.timeLapse,
-      this._liveLabel, this._labelPlaces, this.zoomBox,
+      this._liveLabel, this._labelPlaces, this.zoomBox, this._echoLive,
     );
     this._liveLabel = next.liveLabel;
+    this._echoLive = next.echoLive;
     this._labelPlaces = next.labelPlaces;
   }
 

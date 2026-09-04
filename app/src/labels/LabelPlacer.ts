@@ -145,6 +145,23 @@ export function landscapeRoom(x: number, y: number, w: number, h: number): Label
   return { x, y: y + ((h - w) >> 1), w, h: w, area: w * w };
 }
 
+/** `#rgb` / `#rrggbb` / `rgb()` / `rgba()` with a replaced alpha. Other strings pass through. */
+export function cssWithAlpha(css: string, alpha: number): string {
+  const a = Math.max(0, Math.min(1, alpha));
+  const hex = css.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hex) {
+    let h = hex[1];
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+  }
+  const rgb = css.trim().match(/^rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)/i);
+  if (rgb) return 'rgba(' + rgb[1] + ',' + rgb[2] + ',' + rgb[3] + ',' + a + ')';
+  return css;
+}
+
 /** Place a layer-wide label slot inside a region mask. */
 export class LabelPlacer {
   /** Largest horizontal room, then 1×1 / 4×3 / 16×9 centered in it. */
@@ -188,10 +205,20 @@ export class LabelPlacer {
 
   /**
    * Live unit stays `--label-live*`. Other glyphs use the block fill plus `--label-*-alpha`.
+   * `alphas.live` tints the live CSS color (inset watermark); omit to keep it opaque.
    */
-  labelColor(theme: ThemeColors, onFilled: boolean, live: boolean, fill: number): string {
-    if (live) return onFilled ? theme.labelLive : theme.labelLiveEmpty;
-    return boundStrokeFromFill(fill, onFilled ? theme.labelAlpha : theme.labelEmptyAlpha);
+  labelColor(
+    theme: ThemeColors, onFilled: boolean, live: boolean, fill: number,
+    alphas?: { filled: number; empty: number; live?: number },
+  ): string {
+    if (live) {
+      const base = onFilled ? theme.labelLive : theme.labelLiveEmpty;
+      return alphas && alphas.live != null ? cssWithAlpha(base, alphas.live) : base;
+    }
+    const a = onFilled
+      ? (alphas ? alphas.filled : theme.labelAlpha)
+      : (alphas ? alphas.empty : theme.labelEmptyAlpha);
+    return boundStrokeFromFill(fill, a);
   }
 
   /** Full region in timelapse; otherwise filled or empty half of a live unit. */

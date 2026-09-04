@@ -78,6 +78,9 @@ export const LABEL_FONT = '500 '; // CSS font-weight prefix before the px size
 export const LABEL_FONT_STACK = 'px system-ui, sans-serif';
 export const LABEL_ALPHA = 0.38; // past glyph opacity vs the block fill (black on pastel). Raise = stronger type.
 export const LABEL_EMPTY_ALPHA = 0.34; // future glyph opacity vs --future (white on dark)
+export const LABEL_ECHO_ALPHA = 0.16; // parent-unit watermark on the inset, past (black on fill)
+export const LABEL_ECHO_EMPTY_ALPHA = 0.14; // inset watermark on future / empty
+export const LABEL_ECHO_LIVE_ALPHA = 0.22; // inset watermark for the live parent unit (red)
 
 // Zoom / overlay. Changing these changes the yellow box, inset k×D, and frames.
 export const INSET_MIN_D = 1; // finest inset cell: 1ms

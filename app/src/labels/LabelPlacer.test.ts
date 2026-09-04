@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LabelPlacer, eraseFrameBand, preferLargerHalf } from './LabelPlacer';
+import { LabelPlacer, cssWithAlpha, eraseFrameBand, preferLargerHalf } from './LabelPlacer';
 
 const theme = {
   past: 0, pastFrom: 0, pastSatDip: 0.5, future: 0xff161616, curPast: 0, curFuture: 0, head: 0, surplus: 0,
@@ -17,6 +17,16 @@ describe('LabelPlacer', () => {
     expect(p.labelColor(theme, false, true, theme.future)).toBe('live-empty');
     expect(p.labelColor(theme, true, false, pink)).toBe('rgba(0,0,0,0.38)');
     expect(p.labelColor(theme, false, false, theme.future)).toBe('rgba(255,255,255,0.34)');
+    expect(p.labelColor(theme, true, false, pink, { filled: 0.16, empty: 0.14, live: 0.22 }))
+      .toBe('rgba(0,0,0,0.16)');
+    const liveTheme = { ...theme, labelLive: '#db0202' };
+    expect(p.labelColor(liveTheme, true, true, pink, { filled: 0.16, empty: 0.14, live: 0.22 }))
+      .toBe('rgba(219,2,2,0.22)');
+  });
+
+  it('applies alpha to hex live colors for the inset watermark', () => {
+    expect(cssWithAlpha('#db0202', 0.22)).toBe('rgba(219,2,2,0.22)');
+    expect(cssWithAlpha('#abc', 0.5)).toBe('rgba(170,187,204,0.5)');
   });
 
   it('keeps placeMask on the full region in timelapse', () => {
