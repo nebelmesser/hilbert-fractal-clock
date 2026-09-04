@@ -34,6 +34,8 @@ export const SCORE_NEAR_SQUARE_LO = 0.75; // targetAspect below this is not "nea
 export const SCORE_NEAR_SQUARE_HI = 1.35; // targetAspect above this is not "near square"
 export const SCORE_SQUARE_BONUS = -0.7; // 2ⁿ×2ⁿ exact-fit when the duration is also 2ⁿ seconds
 export const SCORE_EXACT_BONUS = -0.2; // leftover === 0
+export const SCORE_EXACT_COVER = -1.6; // leftover 0 and cells × cellDur = the range (one-panel)
+export const SCORE_NATURAL_LEFTOVER = 1.4; // leftover on a one-panel natural grid
 export const SCORE_LEFTOVER_WEIGHT = 3; // leftoverRatio × this (black surplus cells)
 export const SCORE_COUNT_WEIGHT = 1.05; // |log(n / targetCells)|
 export const SCORE_NICE_DIM_BONUS = -0.05; // both sides in NICE_DIMS
@@ -72,7 +74,7 @@ export const LABEL_FIT_PAD = 0.98; // refuse draw if glyph exceeds this of the p
 export const LABEL_FALLBACK_PX = 16; // if fontFit fails, use this
 export const LABEL_MAX_PX = 28; // cap on large maps so glyphs do not blow up
 export const LABEL_FILL = 0.84; // font = this × the place rectangle
-export const LABEL_OUTLIER_RATIO = 0.55; // one much-smaller slot may use a smaller font; the rest keep the shared size
+export const LABEL_OUTLIER_RATIO = 0.55; // slot smaller than this × median stays unlabeled (does not shrink the layer font)
 export const LABEL_LIVE_MS = 10 * MS_SEC; // live glyph place; raise to hold still, lower to chase the fill
 export const LABEL_FONT = '500 '; // CSS font-weight prefix before the px size
 export const LABEL_FONT_STACK = 'px system-ui, sans-serif';
@@ -181,6 +183,7 @@ export const MONTHS = [ // full English names on the map (not the D/M/Y buttons)
 ];
 
 export const ZOOM_MIN_AREA = 8; // smallest packed parent block we will zoom (must match collectBlocks)
+export const ZOOM_HIDDEN = -1; // stored zoom area: user dismissed the inset (− past coarsest)
 export const ZOOM_BOX_MIN_PX = 8; // min yellow-box side on the parent canvas (CSS px). Not the inset tile.
 export const HILBERT_ZOOM_MAX_DEPTH = 12; // Gilbert children at this depth are already tiny
 export const ZOOM_DEPTH_AREA_RATIO = 1.15; // skip a depth whose largest leaf is this close to the last kept size

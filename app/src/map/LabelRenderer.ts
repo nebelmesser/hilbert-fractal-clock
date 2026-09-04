@@ -3,7 +3,7 @@ import {
   LABEL_FALLBACK_PX, LABEL_FIT_PAD, LABEL_FONT, LABEL_FONT_STACK,
   LABEL_LIVE_MS, LABEL_MAX_PX, LABEL_OUTLIER_RATIO, LABEL_TINY_FRAC,
 } from '../constants';
-import { LabelPlacer, cellInBox, eraseFrameBand, labelSlotKind, maskCentroid, preferLargerHalf, zoomFramePadCells } from '../labels/LabelPlacer';
+import { LabelPlacer, cellInBox, eraseFrameBand, labelSlotKind, maskCentroid, pickSharedLabelFont, preferLargerHalf, zoomFramePadCells } from '../labels/LabelPlacer';
 import { median } from '../math';
 import { pastColorAt, rampCurId, resolveRamp } from '../theme/pastRamp';
 import type { CellBox, LabelPlace, LabelSlotKind, MapLayout, ThemeColors, TimeUnit } from '../types';
@@ -64,7 +64,8 @@ export class LabelRenderer {
   constructor(private placer: LabelPlacer) {}
 
   /**
-   * Layer-wide slot (square / 4×3 / 16×9); one font except a single small outlier.
+   * Layer-wide slot (square / 4×3 / 16×9); one font from typical slots.
+   * Much-smaller slots stay unlabeled so they cannot shrink the rest.
    * Live glyph stays `--label-live*`. Other glyphs use the block fill plus `--label-*-alpha`.
    * On the inset, the parent unit is drawn first (faint, uncapped) under the local labels.
    */
@@ -257,25 +258,9 @@ export class LabelRenderer {
         px: this.placer.fontFit(ctx, it.text, pr.w * cw, pr.h * ch),
       });
     }
-    scored.sort((a, b) => a.score - b.score);
-    let outlierI = -1;
-    if (scored.length >= 2 && scored[0].score < LABEL_OUTLIER_RATIO * scored[1].score) {
-      outlierI = scored[0].i;
-    }
-    let fontSize = Infinity;
-    let outlierPx = LABEL_FALLBACK_PX;
-    for (let s = 0; s < scored.length; s++) {
-      if (scored[s].i === outlierI) {
-        outlierPx = scored[s].px;
-        continue;
-      }
-      if (scored[s].px < fontSize) fontSize = scored[s].px;
-    }
-    if (!isFinite(fontSize)) fontSize = scored.length ? scored[0].px : LABEL_FALLBACK_PX;
-    if (opts.capPx != null) {
-      fontSize = Math.min(fontSize, opts.capPx);
-      outlierPx = Math.min(outlierPx, opts.capPx);
-    }
+    const picked = pickSharedLabelFont(scored, LABEL_OUTLIER_RATIO, LABEL_FALLBACK_PX);
+    let fontSize = picked.fontSize;
+    if (opts.capPx != null) fontSize = Math.min(fontSize, opts.capPx);
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -285,7 +270,8 @@ export class LabelRenderer {
       const pr = it.place;
       if (!pr || !pr.area) continue;
       if (it.n < med * LABEL_TINY_FRAC) continue;
-      const px = i === outlierI ? outlierPx : fontSize;
+      if (!picked.draw.has(i)) continue;
+      const px = fontSize;
       if (px !== lastPx) {
         ctx.font = LABEL_FONT + px + LABEL_FONT_STACK;
         lastPx = px;

@@ -35,8 +35,8 @@ A second panel refines one block of the parent map: the yellow box marks a
 Hilbert-tree leaf around *now*, diagonals connect it to the inset, and each
 parent cell inside it is subdivided into `k × k` sub-cells so the inset can get
 down to sub-second resolution. `+` and `−` step through tree depths, i.e. pick a
-bigger or smaller yellow box. On the day view, zooming out past the coarsest
-step dismisses the inset and leaves a single panel.
+bigger or smaller yellow box. Zooming out past the coarsest step dismisses the
+inset and leaves a single panel; `+` brings it back.
 
 Both panels are laid out to fit the viewport without scrolling — side by side or
 stacked, whichever gives more map area (portrait always stacks).
@@ -45,9 +45,10 @@ stacked, whichever gives more map area (portrait always stacks).
 
 | Key | Action |
 | --- | --- |
-| `D` `M` `Y` `U` | day / month / year / Unix epoch |
+| `D` `M` `Y` `U` `R` | day / month / year / Unix / Range |
 | `+` `−` or `↑` `↓` | zoom in / out |
 | `F` or double click/tap | hide the top bar |
+| `Esc` | leave F-mode |
 
 ### Notes
 
@@ -59,7 +60,7 @@ stacked, whichever gives more map area (portrait always stacks).
 - All colors and most tunables are CSS custom properties in `:root`
   (`hilbert/app/src/style.css`); the app reads them, so retheming means
   editing the stylesheet only.
-- Range is selected with the **Range** button (there is no `R` shortcut).
+- Range is selected with the **Range** button or `R`.
 
 ## Develop
 

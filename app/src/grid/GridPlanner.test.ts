@@ -49,6 +49,18 @@ describe('GridPlanner', () => {
     expect(families.size).toBeLessThanOrEqual(5);
   });
 
+  it('tiles a civil month without leftover when preferExact', () => {
+    const planner = new GridPlanner();
+    for (const days of [28, 30, 31]) {
+      for (const aspect of [0.7, 1.2, 1.6, 1.8]) {
+        const grid = planner.pickGrid(days * MS_DAY, aspect, 1400, undefined, true);
+        expect(grid.leftover, `${days}d a=${aspect}`).toBe(0);
+        expect(grid.w * grid.h).toBe(grid.cells);
+        expect(Math.abs(grid.cells * grid.cellDur - days * MS_DAY)).toBeLessThan(0.5);
+      }
+    }
+  });
+
   it('treats 1s and k²×{0.1,0.25,0.5,1}s parent cells as zoomable', () => {
     const planner = new GridPlanner();
     expect(planner.isZoomableDur(MS_SEC)).toBe(true);

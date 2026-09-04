@@ -6,8 +6,8 @@ import {
   MIN_CELL_PX, MIN_CELLS, MIN_CSS_PX, MS_DAY, MS_HOUR, MS_SEC, NICE_DIMS, NICE_DURS,
   POW2_SIDE_HI, POW2_SIDE_LO, SCORE_COUNT_WEIGHT, SCORE_DAY_HOUR_TILE,
   SCORE_DAY_LEFTOVER, SCORE_DAY_RECT_BONUS,
-  SCORE_EXACT_BONUS,
-  SCORE_FINE_DUR_BONUS, SCORE_LEFTOVER_WEIGHT, SCORE_NEAR_SQUARE_HI,
+  SCORE_EXACT_BONUS, SCORE_EXACT_COVER,
+  SCORE_FINE_DUR_BONUS, SCORE_LEFTOVER_WEIGHT, SCORE_NATURAL_LEFTOVER, SCORE_NEAR_SQUARE_HI,
   SCORE_NEAR_SQUARE_LO, SCORE_NICE_DIM_BONUS, SCORE_NOT_ZOOMABLE,
   SCORE_ODD_PENALTY, SCORE_POW2_CELLS, SCORE_PREFER_DUR_BONUS,
   SCORE_QUAD_PENALTY, SCORE_SQUARE_BONUS, SCORE_TALL_WEIGHT,
@@ -176,7 +176,7 @@ export class GridPlanner {
   scoreGrid(
     w: number, h: number, cells: number, cellDur: number,
     targetAspect: number, targetCells: number, preferDur: number | null,
-    dayPrefer = false,
+    dayPrefer = false, preferExact = false, durationMs = 0,
   ): number {
     const n = w * h;
     const leftover = n - cells;
@@ -191,7 +191,12 @@ export class GridPlanner {
     const nearSquareTarget = targetAspect > SCORE_NEAR_SQUARE_LO && targetAspect < SCORE_NEAR_SQUARE_HI;
     const pow2Square = leftover === 0 && w === h && n >= SCORE_POW2_CELLS && (n & (n - 1)) === 0 && durationIsPow2;
     const squareBonus = pow2Square && nearSquareTarget ? SCORE_SQUARE_BONUS : 0;
-    const exactBonus = leftover === 0 ? SCORE_EXACT_BONUS : leftoverRatio * SCORE_LEFTOVER_WEIGHT;
+    let exactBonus = leftover === 0 ? SCORE_EXACT_BONUS : leftoverRatio * SCORE_LEFTOVER_WEIGHT;
+    if (preferExact) {
+      const exactCover = leftover === 0 && durationMs > 0 && Math.abs(cells * cellDur - durationMs) < 0.5;
+      if (exactCover) exactBonus += SCORE_EXACT_COVER;
+      else if (leftover > 0) exactBonus += SCORE_NATURAL_LEFTOVER;
+    }
     const countErr = Math.abs(Math.log(n / targetCells));
     const niceDimBonus = (NICE_DIM_SET.has(w) && NICE_DIM_SET.has(h)) ? SCORE_NICE_DIM_BONUS : 0;
     const preferBonus = preferDur && Math.abs(cellDur - preferDur) < 1e-3 ? SCORE_PREFER_DUR_BONUS : 0;
@@ -221,12 +226,14 @@ export class GridPlanner {
   consider(
     best: GridSpec | null, w: number, h: number, cells: number, cellDur: number,
     targetAspect: number, targetCells: number, preferDur: number | null, maxCells: number,
-    dayPrefer = false,
+    dayPrefer = false, preferExact = false, durationMs = 0,
   ): GridSpec | null {
     if (w < FACTOR_MIN || h < FACTOR_MIN) return best;
     if (w * h < cells) return best;
     if (w * h > (maxCells || MAX_CELLS) * CELL_CAP_SLACK) return best;
-    const score = this.scoreGrid(w, h, cells, cellDur, targetAspect, targetCells, preferDur, dayPrefer);
+    const score = this.scoreGrid(
+      w, h, cells, cellDur, targetAspect, targetCells, preferDur, dayPrefer, preferExact, durationMs,
+    );
     if (!best || score < (best.score ?? Infinity)) {
       return { w, h, cells, cellDur, leftover: w * h - cells, score };
     }
@@ -271,7 +278,7 @@ export class GridPlanner {
   }
 
   /** w×h and cellDur for this range; leftover cells stay surplus. */
-  pickGrid(durationMs: number, targetAspect: number, cssWidth: number, cellCap?: number): GridSpec {
+  pickGrid(durationMs: number, targetAspect: number, cssWidth: number, cellCap?: number, preferExact = false): GridSpec {
     const unixGrid = this.pickUnixSquare(durationMs);
     if (unixGrid) return unixGrid;
     let best: GridSpec | null = null;
@@ -288,7 +295,10 @@ export class GridPlanner {
     const take = (
       w: number, h: number, cells: number, cellDur: number, maxCells: number,
     ) => {
-      best = this.consider(best, w, h, cells, cellDur, targetAspect, targetCells, preferDur, maxCells, dayPrefer);
+      best = this.consider(
+        best, w, h, cells, cellDur, targetAspect, targetCells, preferDur, maxCells,
+        dayPrefer, preferExact, durationMs,
+      );
     };
     if (dayPrefer) {
       this.forEachDayRect(Math.max(cap, MAX_CELLS) * CELL_CAP_SLACK, (w, h, cells, cellDur) => {

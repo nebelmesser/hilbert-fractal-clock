@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FRAME_KEY } from '../constants';
+import { FRAME_KEY, ZOOM_HIDDEN } from '../constants';
 import { FrameStore } from './FrameStore';
 
 /** In-memory Storage stand-in for FrameStore tests. */
@@ -28,6 +28,18 @@ describe('FrameStore', () => {
     expect(loaded.zoomMs.month).toBe(2000);
     expect(loaded.arbitrary).toEqual({ start: 10, end: 20 });
     expect(JSON.parse(mem.getItem(FRAME_KEY)!).chromeHidden).toBeUndefined();
+  });
+
+  it('round-trips a dismissed inset (ZOOM_HIDDEN)', () => {
+    const mem = new MemoryStore();
+    const store = new FrameStore(mem);
+    store.save({
+      mode: 'month',
+      layout: 'fit',
+      zoom: { today: 0, month: ZOOM_HIDDEN, year: 0, epoch: 0, arbitrary: 0 },
+      zoomMs: { today: 0, month: 0, year: 0, epoch: 0, arbitrary: 0 },
+    });
+    expect(store.load().zoom.month).toBe(ZOOM_HIDDEN);
   });
 
   it('ignores corrupt JSON and never writes F-mode', () => {

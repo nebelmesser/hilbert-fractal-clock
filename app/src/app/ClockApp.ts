@@ -2,7 +2,7 @@ import {
   ARB_DEBOUNCE_MS, ASPECT_MAX, ASPECT_MIN, AVAIL_H_MIN, CAPTION_FALLBACK,
   INSET_MAX_D, LOOP_MAX_MS, LOOP_MIN_MS, MIN_CSS_PX, MS_MIN, ORIENT_RELAYOUT_MS,
   PROBE_ROW_CAP, PINCH_SCALE_EPS, RESIZE_DEBOUNCE_MS, RESIZE_EPS, STAGE_GUTTER, STAGE_MIN_W,
-  TILE_MIN, WIDE_STAGE_RATIO, ZOOM_KEEP_AREA_HI, ZOOM_KEEP_AREA_LO, ZOOM_MIN_AREA,
+  TILE_MIN, WIDE_STAGE_RATIO, ZOOM_HIDDEN, ZOOM_KEEP_AREA_HI, ZOOM_KEEP_AREA_LO, ZOOM_MIN_AREA,
   ZOOM_IDS,
 } from '../constants';
 import { curves } from '../curve/HilbertCurve';
@@ -137,12 +137,6 @@ export class ClockApp {
     this.saveFrame();
   }
 
-  /** Drop stored zoom (day − past coarsest, or a fresh +/− step). */
-  private clearZoomLevel(): void {
-    this.zoomSizeByMode[this.mode] = 0;
-    this.zoomMsByMode[this.mode] = 0;
-  }
-
   /** Stored duration is for the old grid — forget it after a real window resize. */
   private forgetZoomOnResize(): void {
     this.zoomFollowStored = false;
@@ -193,10 +187,15 @@ export class ClockApp {
     if (i <= 1) requestAnimationFrame(() => this.redrawConnectors());
   }
 
-  /** Today: − past coarsest hides the second panel (parent may already be ~1s). */
-  private insetDismissible(main: TimeMap | undefined): boolean {
-    if (this.mode === 'today') return true;
-    return !!(main && main.layout && main.layout.grid.cellDur <= INSET_MAX_D);
+  /**
+   * Second panel is off: user dismissed it, or this range defaults to one panel
+   * (Today / parent already ≤1s). Other presets keep the inset until −.
+   */
+  private insetIsOff(main: TimeMap | undefined): boolean {
+    const area = this.currentZoomArea();
+    if (area === ZOOM_HIDDEN) return true;
+    if (area > 0) return false;
+    return this.mode === 'today' || !!(main && main.layout && main.layout.grid.cellDur <= INSET_MAX_D);
   }
 
   /** True while the second tile is visible. */
@@ -208,7 +207,7 @@ export class ClockApp {
   private zoomChainKey(now: number): string {
     const main = this.slots[0] && this.slots[0].map;
     if (!main || !main.layout) return '';
-    if (this.insetDismissible(main) && this.currentZoomArea() <= 0) return 'none';
+    if (this.insetIsOff(main)) return 'none';
     if (!main.zoomRange) return this.listZoomLadder(now).uniq.length ? 'need' : 'none';
     if (!main.zoomContainsNow(now)) {
       const dur = main.layout.grid.cellDur;
@@ -269,14 +268,14 @@ export class ClockApp {
     this.relayout();
   }
 
-  /** Today, one panel: grid follows the page — portrait phone → tall grid. */
+  /** One panel: grid follows the page — portrait phone → tall grid. Prefer an exact tiling. */
   private rebuildNatural(main: TimeMap): void {
     const metrics = this.layout.layoutMetrics(this.slots, this.chrome.hidden);
     const box = this.layout.availBox();
     const cap = this.slots[0] ? this.layout.captionExtra(this.slots[0], this.chrome.hidden) : CAPTION_FALLBACK;
     const slotW = Math.max(TILE_MIN, box.w);
     const slotH = Math.max(TILE_MIN, metrics.availH, box.h - cap);
-    main.rebuild(slotW, this.layout.slotAspect(slotW, slotH));
+    main.rebuild(slotW, this.layout.slotAspect(slotW, slotH), true);
     if (slotW > MIN_CSS_PX && slotH > MIN_CSS_PX) main.setDisplaySize(slotW, slotH);
   }
 
@@ -294,15 +293,10 @@ export class ClockApp {
     this.stackEl.classList.remove('fit-row', 'fit-col');
     this.stackEl.style.setProperty('--stack-row-gap', '0px');
 
-    if (this.mode === 'today') {
+    const onePanel = this.mode === 'today' || this.currentZoomArea() === ZOOM_HIDDEN;
+    if (onePanel) {
       this.rebuildNatural(main);
       this.updateZoom(now, true);
-      if (this.layout.fitSlots(this.slots).length < 2) {
-        this.clearSlotBoxes();
-        this.layout.enforceFitInStage(this.slots, this.chrome.hidden, () => this.redrawConnectors());
-        this.syncZoomButtons();
-        return;
-      }
     } else {
       const box = this.layout.availBox();
       const wide = !this.layout.pageIsPortrait() && box.w >= box.h * WIDE_STAGE_RATIO;
@@ -311,6 +305,17 @@ export class ClockApp {
       const probeH = wide ? Math.max(AVAIL_H_MIN, box.h - STAGE_GUTTER) : Math.max(AVAIL_H_MIN, Math.floor((box.h - PROBE_ROW_CAP) / 2));
       main.rebuild(probeW, clamp(probeW / probeH, ASPECT_MIN, ASPECT_MAX));
       this.updateZoom(now, true, probeW);
+    }
+
+    if (this.layout.fitSlots(this.slots).length < 2) {
+      if (!onePanel) {
+        this.rebuildNatural(main);
+        this.updateZoom(now, true);
+      }
+      this.clearSlotBoxes();
+      this.layout.enforceFitInStage(this.slots, this.chrome.hidden, () => this.redrawConnectors());
+      this.syncZoomButtons();
+      return;
     }
 
     for (let i = 0; i < 3; i++) {
@@ -327,7 +332,7 @@ export class ClockApp {
     this.syncZoomButtons();
   }
 
-  /** Today one-panel: let the map size itself, do not lock Fit tiles. */
+  /** One-panel: let the map size itself, do not lock Fit tiles. */
   private clearSlotBoxes(): void {
     for (let i = 0; i < this.slots.length; i++) {
       this.slots[i].block.style.width = '';
@@ -356,11 +361,11 @@ export class ClockApp {
     }
   }
 
-  /** One inset; parent ≤1s stays one panel until +. */
+  /** One inset; dismissed (or Today / ≤1s parent) stays one panel until +. */
   private updateZoom(now: number, force = false, insetCssWidth?: number, forcedWin?: ZoomWindow | null): void {
     const main = this.slots[0] && this.slots[0].map;
     if (!main || !main.layout) return;
-    if (!forcedWin && this.insetDismissible(main) && this.currentZoomArea() <= 0) {
+    if (!forcedWin && this.insetIsOff(main)) {
       main.setZoomHighlight(null);
       this.hideSlotsFrom(1);
       this.lastZoomKey = 'none';
@@ -501,24 +506,24 @@ export class ClockApp {
     return { uniq, idx };
   }
 
-  /** Disable +/− when that step does not exist. */
+  /** Disable +/− when that step does not exist. − stays on while the inset is visible. */
   private syncZoomButtons(): void {
     const main = this.slots[0] && this.slots[0].map;
     const lad = this.listZoomLadder(this.clock.nowMs());
     const n = lad.uniq.length;
-    const dismiss = this.insetDismissible(main);
     const on = !!(main && main.zoomRange && this.insetSlotOn());
-    if (dismiss && !on) {
+    if (!on) {
       this.presets.syncButtons(n < 1, true);
       return;
     }
     const idx = lad.idx < 0 ? 0 : lad.idx;
-    this.presets.syncButtons(n < 1 || idx <= 0, dismiss ? false : (n < 2 || idx >= n - 1));
+    this.presets.syncButtons(n < 1 || idx <= 0, false);
   }
 
-  /** Parent ≤1s: − past the coarsest window drops the second panel. */
+  /** − past the coarsest window drops the second panel in every preset. */
   private hideFineInset(): void {
-    this.clearZoomLevel();
+    this.zoomSizeByMode[this.mode] = ZOOM_HIDDEN;
+    this.zoomMsByMode[this.mode] = 0;
     this.saveFrame();
     const main = this.slots[0] && this.slots[0].map;
     if (main) main.setZoomHighlight(null);
@@ -533,9 +538,8 @@ export class ClockApp {
     if (!main || !main.layout) return;
     const now = this.clock.nowMs();
     const lad = this.listZoomLadder(now);
-    const dismiss = this.insetDismissible(main);
     const on = !!(main.zoomRange && this.insetSlotOn());
-    if (dismiss && !on) {
+    if (!on) {
       if (dir >= 0 || !lad.uniq.length) return;
       this.zoomFollowStored = false;
       this.zoomSizeByMode[this.mode] = 1e15;
@@ -545,7 +549,7 @@ export class ClockApp {
       return;
     }
     if (!lad.uniq.length) {
-      if (dismiss && on && dir > 0) this.hideFineInset();
+      if (dir > 0) this.hideFineInset();
       return;
     }
     let idx = lad.idx;
@@ -562,7 +566,7 @@ export class ClockApp {
       }
     }
     const next = idx + dir;
-    if (next >= lad.uniq.length && dismiss && dir > 0) {
+    if (next >= lad.uniq.length && dir > 0) {
       this.hideFineInset();
       return;
     }
@@ -716,12 +720,18 @@ export class ClockApp {
     }
   }
 
-  /** D/M/Y/U presets, F chrome, +/− zoom. Ignore when typing in an input. */
+  /** D/M/Y/U/R presets, F chrome, Esc leaves F, +/− zoom. Ignore when typing in an input. */
   private onKey(e: KeyboardEvent): void {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (k === 'Escape') {
+      if (!this.chrome.hidden) return;
+      e.preventDefault();
+      this.chrome.setHidden(false);
+      return;
+    }
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-    const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if (k === 'f') {
       e.preventDefault();
       this.chrome.toggle();
@@ -733,7 +743,7 @@ export class ClockApp {
       this.nudgeZoomSize(zoomIn ? -1 : 1);
       return;
     }
-    const modes: Record<string, ModeId> = { d: 'today', m: 'month', y: 'year', u: 'epoch' };
+    const modes: Record<string, ModeId> = { d: 'today', m: 'month', y: 'year', u: 'epoch', r: 'arbitrary' };
     if (!modes[k]) return;
     e.preventDefault();
     this.setMode(modes[k]);

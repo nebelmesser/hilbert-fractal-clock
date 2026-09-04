@@ -98,6 +98,8 @@ aspect.
 - Portrait: never ask for a landscape grid
 - Today with one panel keeps the natural day picture — do not two-column pack
   it
+- Any preset with the inset dismissed uses that same one-panel fill; prefer a
+  `w×h` that tiles the range exactly (no leftover `+N`)
 
 ## Boundary and label units
 
@@ -142,7 +144,7 @@ Buttons: **D** (today), **M** (month), **Y** (year), **Unix**, **Range**, then
 - When a custom window has ended, advance to the next same-length window that
   contains `now`
 - Epoch does not move
-- Range is selected by the button only. There is no `R` keyboard shortcut
+- Range is selected by the **Range** button or `R`
 
 ## Zoom / inset
 
@@ -154,8 +156,9 @@ Buttons: **D** (today), **M** (month), **Y** (year), **Unix**, **Range**, then
 - Steps are tree depths, not an arbitrary bbox. Skip a depth that only halves
   the current leaf or still covers ≳¼ of the parent (`ZOOM_PARENT_SHARE`)
 - Coarsest inset cell `D ≤ 1s` (`INSET_MAX_D`); finest `1ms` (`INSET_MIN_D`)
-- On **Today** (and when the parent `cellDur ≤ 1s`): default is one panel;
-  `−` past the coarsest step dismisses the inset
+- On **Today** (and when the parent `cellDur ≤ 1s`): default is one panel.
+  In every preset, `−` past the coarsest step dismisses the inset
+  (`ZOOM_HIDDEN`); `+` brings the coarsest window back
 - While `now` is inside the locked box, do not jump to another depth. When it
   leaves, slide to the next packed sibling with the same locked duration
   (`ZOOM_KEEP_AREA_LO` / `HI`) — no spontaneous zoom-in on a mixed 3-way split
@@ -190,8 +193,8 @@ Buttons: **D** (today), **M** (month), **Y** (year), **Unix**, **Range**, then
 
 Ignore when Ctrl / Meta / Alt is down, or when focus is in an input.
 
-- `D` `M` `Y` `U` — presets (not `R`)
-- `F` — chrome
+- `D` `M` `Y` `U` `R` — presets
+- `F` — chrome; `Esc` leaves F-mode
 - `+` `=` `↑` zoom in; `−` `_` `↓` zoom out
 
 ## Persistence
@@ -200,6 +203,8 @@ Ignore when Ctrl / Meta / Alt is down, or when focus is in an input.
 
 ```
 { mode, layout: "fit", zoom, zoomMs, arbitrary? }
+
+`zoom[mode] === ZOOM_HIDDEN` (−1) means the inset was dismissed.
 ```
 
 F-mode is not persisted. Corrupt JSON is ignored.
@@ -227,6 +232,5 @@ F-mode is not persisted. Corrupt JSON is ignored.
 
 - Weeks on the unit ladder
 - A “Full” (scrolling) layout
-- An `R` keyboard shortcut for Range
 - Pixel / visual regression tests
 - A shared monorepo with `4d/app`

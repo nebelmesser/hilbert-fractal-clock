@@ -1,4 +1,4 @@
-import { FRAME_KEY, ZOOM_IDS } from '../constants';
+import { FRAME_KEY, ZOOM_HIDDEN, ZOOM_IDS } from '../constants';
 import type { ModeId, TimeRange } from '../types';
 
 export type FrameData = {
@@ -62,13 +62,13 @@ export class FrameStore {
     return { mode, zoom, zoomMs, arbitrary };
   }
 
-  /** Copy finite ≥0 numbers onto dest. */
+  /** Copy finite zoom areas (ZOOM_HIDDEN …) onto dest. */
   private loadZoomMap(raw: unknown, dest: Record<ModeId, number>): void {
     if (!raw || typeof raw !== 'object') return;
     const rec = raw as Record<string, unknown>;
     for (let i = 0; i < ZOOM_IDS.length; i++) {
       const n = +(rec[ZOOM_IDS[i]] as number);
-      if (Number.isFinite(n) && n >= 0) dest[ZOOM_IDS[i]] = n;
+      if (Number.isFinite(n) && n >= ZOOM_HIDDEN) dest[ZOOM_IDS[i]] = n;
     }
   }
 }

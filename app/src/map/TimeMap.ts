@@ -113,12 +113,12 @@ export class TimeMap {
     this._labelPlaces = null;
   }
 
-  /** Parent map for [start, end). */
-  rebuild(cssWidth: number, targetAspect: number): void {
+  /** Parent map for [start, end). `preferExact` — leftover 0 when a tiling exists. */
+  rebuild(cssWidth: number, targetAspect: number, preferExact = false): void {
     const duration = this.end - this.start;
     if (!(duration > 0) || cssWidth < MIN_CSS_PX) return;
     this.zoomBox = null;
-    const grid = this.host.grids.pickGrid(duration, targetAspect, cssWidth);
+    const grid = this.host.grids.pickGrid(duration, targetAspect, cssWidth, undefined, preferExact);
     const g = this.host.curves.get(grid.w, grid.h);
     const cellStart = new Float64Array(grid.cells);
     for (let i = 0; i < grid.cells; i++) cellStart[i] = this.start + i * grid.cellDur;

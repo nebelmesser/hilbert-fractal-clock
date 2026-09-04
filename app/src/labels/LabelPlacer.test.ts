@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LabelPlacer, cssWithAlpha, eraseFrameBand, preferLargerHalf } from './LabelPlacer';
+import { LabelPlacer, cssWithAlpha, eraseFrameBand, pickSharedLabelFont, preferLargerHalf } from './LabelPlacer';
 
 const theme = {
   past: 0, pastFrom: 0, pastSatDip: 0.5, future: 0xff161616, curPast: 0, curFuture: 0, head: 0, surplus: 0,
@@ -101,5 +101,31 @@ describe('LabelPlacer', () => {
     expect(place.y).toBeGreaterThanOrEqual(pad);
     expect(place.x + place.w).toBeLessThanOrEqual(bw - pad);
     expect(place.y + place.h).toBeLessThanOrEqual(bh - pad);
+  });
+});
+
+describe('pickSharedLabelFont', () => {
+  it('sizes the layer from typical slots and skips a much smaller one', () => {
+    const picked = pickSharedLabelFont([
+      { i: 0, score: 8, px: 4 },
+      { i: 1, score: 40, px: 18 },
+      { i: 2, score: 42, px: 20 },
+      { i: 3, score: 38, px: 16 },
+    ], 0.55, 10);
+    expect(picked.draw.has(0)).toBe(false);
+    expect(picked.draw.has(1)).toBe(true);
+    expect(picked.draw.has(2)).toBe(true);
+    expect(picked.draw.has(3)).toBe(true);
+    expect(picked.fontSize).toBe(18);
+  });
+
+  it('keeps every slot when sizes are similar', () => {
+    const picked = pickSharedLabelFont([
+      { i: 0, score: 30, px: 14 },
+      { i: 1, score: 32, px: 16 },
+      { i: 2, score: 28, px: 12 },
+    ], 0.55, 10);
+    expect([...picked.draw].sort((a, b) => a - b)).toEqual([0, 1, 2]);
+    expect(picked.fontSize).toBe(14);
   });
 });

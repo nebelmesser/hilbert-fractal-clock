@@ -1,4 +1,5 @@
 import { LABEL_FILL, LABEL_FONT, LABEL_FONT_STACK, ZOOM_FRAME_OUTSET, ZOOM_FRAME_W } from '../constants';
+import { median } from '../math';
 import { boundStrokeFromFill } from '../theme/pastRamp';
 import type { CellBox, LabelPlace, LabelSlotKind, ThemeColors } from '../types';
 
@@ -124,6 +125,25 @@ export function zoomFramePadCells(cellW: number, cellH: number): number {
   const px = Math.max(16, ZOOM_FRAME_W + ZOOM_FRAME_OUTSET * 2);
   const cell = Math.min(cellW, cellH);
   return Math.max(1, Math.ceil(px / Math.max(1e-6, cell)));
+}
+
+/**
+ * One layer font from typical slots. Slots much smaller than the median
+ * stay unlabeled so they cannot pull every glyph down to a speck.
+ */
+export function pickSharedLabelFont(
+  scored: Array<{ i: number; score: number; px: number }>,
+  outlierRatio: number,
+  fallback: number,
+): { fontSize: number; draw: Set<number> } {
+  if (!scored.length) return { fontSize: fallback, draw: new Set() };
+  const typical = median(scored.map((s) => s.score));
+  const keep = scored.filter((s) => s.score >= typical * outlierRatio);
+  const pool = keep.length ? keep : scored;
+  return {
+    fontSize: median(pool.map((s) => s.px)),
+    draw: new Set(pool.map((s) => s.i)),
+  };
 }
 
 /** Centre of mass of filled mask cells. */
