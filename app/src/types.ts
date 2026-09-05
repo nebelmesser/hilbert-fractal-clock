@@ -137,6 +137,8 @@ export type ThemeColors = {
   labelEmptyAlpha: number;
   labelLive: string;
   labelLiveEmpty: string;
+  overlay: string;
+  overlayMaxPx: number;
   currentOutline: string;
   zoom: string;
   bound0: string;

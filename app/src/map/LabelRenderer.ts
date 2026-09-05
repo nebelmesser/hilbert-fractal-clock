@@ -57,6 +57,7 @@ type LayerOpts = {
   innerIds: Int32Array | null;
   innerId: number | null;
   innerUnitId: string | null;
+  hideLiveHour: boolean;
 };
 
 /** Draw unit labels: one slot kind per layer, pinned places in timelapse. */
@@ -84,6 +85,7 @@ export class LabelRenderer {
     labelPlaces: PinnedPlaces | null,
     zoomBox: CellBox | null = null,
     echoLive: LiveLabelCache | null = null,
+    overlay = false,
   ): { liveLabel: LiveLabelCache | null; echoLive: LiveLabelCache | null; labelPlaces: PinnedPlaces | null } {
     ctx.clearRect(0, 0, cssW, cssH);
     const { grid, levels, labelLevel, echo } = layout;
@@ -111,6 +113,7 @@ export class LabelRenderer {
         innerIds: inner ? inner.ids : null,
         innerId,
         innerUnitId: inner ? inner.unit.id : null,
+        hideLiveHour: false,
       });
       nextEcho = timeLapse ? echoLive : painted.liveLabel;
       nextPlaces = painted.labelPlaces;
@@ -130,6 +133,7 @@ export class LabelRenderer {
       innerIds: inner ? inner.ids : null,
       innerId,
       innerUnitId: inner ? inner.unit.id : null,
+      hideLiveHour: overlay && unit.id === 'hour',
     });
     return {
       liveLabel: timeLapse ? liveLabel : local.liveLabel,
@@ -235,6 +239,7 @@ export class LabelRenderer {
     let nextPlaces = opts.labelPlaces;
     for (let r = 0; r < pending.length; r++) {
       const p = pending[r];
+      if (opts.hideLiveHour && p.live) continue;
       const placeKey = opts.keyPrefix + p.ox + ':' + p.oy + ':' + p.text + ':' + zoomKey;
       const pinned = timeLapse && nextPlaces && nextPlaces.get(placeKey);
       if (pinned && pinned.kind === kind) {

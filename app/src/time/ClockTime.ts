@@ -13,6 +13,17 @@ export function parseClockTime(raw: string | null): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
+export type OverlayMode = 'inside' | 'top';
+
+/** `?overlay=inside` — HH:mm in the live hour; `?overlay=top` — centered on the panel. */
+export function parseOverlay(raw: string | null): OverlayMode | null {
+  if (raw == null) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (s === 'inside') return 'inside';
+  if (s === 'top') return 'top';
+  return null;
+}
+
 /** Parse `?speedup=`; invalid or empty values fall back to 1, cap 1e12. */
 export function parseSpeedup(raw: string | null): number {
   if (raw == null || raw === '') return 1;
@@ -29,14 +40,16 @@ export class ClockTime {
   readonly origin: number;
   readonly speedup: number;
   readonly timeLapse: boolean;
+  readonly overlay: OverlayMode | null;
   private readonly wallOrigin: number;
 
-  /** Read `start`/`time`/`speedup` from a query string. */
+  /** Read `start`/`time`/`speedup`/`overlay` from a query string. */
   constructor(search = '', wallNow = Date.now()) {
     const qs = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
     const parsed = parseClockTime(qs.get('start') || qs.get('time'));
     this.speedup = parseSpeedup(qs.get('speedup'));
     this.timeLapse = this.speedup !== 1;
+    this.overlay = parseOverlay(qs.get('overlay'));
     this.wallOrigin = wallNow;
     this.origin = parsed == null ? wallNow : parsed;
   }

@@ -1,5 +1,5 @@
 import {
-  CURRENT_UNIT_MAX_SHARE, DPR_MAX, HL_PAD_PX, LOOP_MAX_MS, MIN_CSS_PX, ZOOM_MIN_AREA,
+  CURRENT_UNIT_MAX_SHARE, DPR_MAX, HL_PAD_PX, LOOP_MAX_MS, MIN_CSS_PX, MS_MIN, ZOOM_MIN_AREA,
 } from '../constants';
 import type { HilbertCurve } from '../curve/HilbertCurve';
 import type { GridPlanner } from '../grid/GridPlanner';
@@ -13,6 +13,7 @@ import type {
   CellBox, GridSpec, MapLayout, TimeRange, ZoomLock, ZoomWindow,
 } from '../types';
 import { boxContainsCell, higherBoundUnits, pickLabelLevelIndex, pickLevels, ZoomLadder } from '../zoom/ZoomLadder';
+import { paintDayClock } from './dayOverlay';
 import { BoundRenderer } from './BoundRenderer';
 import { FillRenderer } from './FillRenderer';
 import { HighlightRenderer } from './HighlightRenderer';
@@ -58,6 +59,7 @@ export class TimeMap {
   _zoomAspect = 1;
   _lastKey = '';
   _lastLabelKey = '';
+  _lastOverlayMin: number | null = null;
   _liveLabel: LiveLabelCache | null = null;
   _echoLive: LiveLabelCache | null = null;
   _labelPlaces: PinnedPlaces | null = null;
@@ -472,7 +474,12 @@ export class TimeMap {
       this._renderLabels(now);
       this._lastLabelKey = labelKey;
     }
-    if (force || unitChanged) this._renderOverlay(now, localCurId);
+    const overlayMin = this.host.clock.overlay && levels[0]?.id === 'hour'
+      ? Math.floor(now / MS_MIN) : null;
+    if (force || unitChanged || overlayMin !== this._lastOverlayMin) {
+      this._lastOverlayMin = overlayMin;
+      this._renderOverlay(now, localCurId);
+    }
   }
 
   /** Coarsest unit at now, or the next if that unit is almost the whole map. */
@@ -528,6 +535,7 @@ export class TimeMap {
       this.ctxLabels, this.layout, this.cssW, this.cssH, now,
       this.host.theme.colors, this.host.clock.timeLapse,
       this._liveLabel, this._labelPlaces, this.zoomBox, this._echoLive,
+      this.host.clock.overlay === 'inside',
     );
     this._liveLabel = next.liveLabel;
     this._echoLive = next.echoLive;
@@ -542,6 +550,12 @@ export class TimeMap {
       this.host.theme.colors, curId, this.zoomBox,
       this.wrap.classList.contains('map-zoom'),
     );
+    if (this.host.clock.overlay) {
+      paintDayClock(
+        this.ctxHl, this.layout, this.cssW, this.cssH, now,
+        this.host.theme.colors, curId, this.host.clock.overlay,
+      );
+    }
   }
 
   /** System title from this pixel; mouse only — touch must not set title. */

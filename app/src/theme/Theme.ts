@@ -1,4 +1,4 @@
-import { BOUND_ALPHA_1, BOUND_ALPHA_2, BOUND_ALPHA_3, LABEL_ALPHA, LABEL_EMPTY_ALPHA, PAST_SAT_DIP } from '../constants';
+import { BOUND_ALPHA_1, BOUND_ALPHA_2, BOUND_ALPHA_3, LABEL_ALPHA, LABEL_EMPTY_ALPHA, OVERLAY_MAX_PX, PAST_SAT_DIP } from '../constants';
 import type { ThemeColors } from '../types';
 
 /** Read map / label / bound colors from :root CSS custom properties. */
@@ -6,7 +6,7 @@ export class Theme {
   colors: ThemeColors = {
     past: 0, pastFrom: 0, pastMid: 0, pastTo: 0, pastSatDip: PAST_SAT_DIP, future: 0, curPast: 0, curInner: 0, curFuture: 0, head: 0, surplus: 0,
     labelAlpha: LABEL_ALPHA, labelEmptyAlpha: LABEL_EMPTY_ALPHA, labelLive: '', labelLiveEmpty: '',
-    currentOutline: '', zoom: '',
+    overlay: '', overlayMaxPx: OVERLAY_MAX_PX, currentOutline: '', zoom: '',
     bound0: '',
     boundAlpha1: BOUND_ALPHA_1, boundAlpha2: BOUND_ALPHA_2, boundAlpha3: BOUND_ALPHA_3,
   };
@@ -59,6 +59,8 @@ export class Theme {
       labelEmptyAlpha: this.cssNumber('--label-empty-alpha', LABEL_EMPTY_ALPHA),
       labelLive: this.cssVar('--label-live'),
       labelLiveEmpty: this.cssVar('--label-live-empty'),
+      overlay: this.cssVar('--overlay'),
+      overlayMaxPx: this.cssNumber('--overlay-max-px', OVERLAY_MAX_PX),
       currentOutline: this.cssVar('--current-outline'),
       zoom: this.cssVar('--zoom'),
       bound0: this.cssVar('--bound-0'),

@@ -23,6 +23,8 @@
       --label-empty-alpha: 0.34; /* future glyph: white overlay on --future */
       --label-live: #db0202; /* live-unit label on the filled half */
       --label-live-empty: #db0202; /* live-unit label on the empty half */
+      --overlay: rgba(244, 244, 244, 0.38); /* day overlay HH:mm (`?overlay=inside` / `top`) */
+      --overlay-max-px: 160; /* max overlay font size; fit still shrinks on a small panel */
       --current-outline: rgba(255, 107, 107, 0.5); /* stroke around the live unit */
       --zoom: rgba(255, 196, 72, 0.95); /* yellow box + inset frame */
       --zoom-frame-w: 2px; /* ZOOM_FRAME_W — square icons + map frames */
