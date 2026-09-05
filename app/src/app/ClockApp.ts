@@ -227,7 +227,7 @@ export class ClockApp {
     if (id === 'arbitrary') {
       this.syncArbitraryBounds();
       if (!this.arbitrary) {
-        const r = rangeForMode('today', this.clock.nowMs(), null);
+        const r = rangeForMode('arbitrary', this.clock.nowMs(), null);
         this.arbitrary = r;
         this.arbFrom.value = localDateValue(r.start);
         this.arbTo.value = localDateValue(r.end - 1);
@@ -768,9 +768,9 @@ export class ClockApp {
       this.arbFrom.value = localDateValue(this.arbitrary.start);
       this.arbTo.value = localDateValue(this.arbitrary.end - 1);
     } else {
-      const today = rangeForMode('today', now, null);
-      this.arbFrom.value = localDateValue(today.start);
-      this.arbTo.value = localDateValue(today.end - 1);
+      const century = rangeForMode('arbitrary', now, null);
+      this.arbFrom.value = localDateValue(century.start);
+      this.arbTo.value = localDateValue(century.end - 1);
     }
     this.syncArbitraryBounds();
     if (this.arbitrary) {

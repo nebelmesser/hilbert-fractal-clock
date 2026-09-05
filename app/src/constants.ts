@@ -69,13 +69,13 @@ export const LABEL_TARGET_REGIONS = 18; // ideal count of labeled slabs
 export const LABEL_TOO_MANY = 48; // more regions than this starts costing
 export const LABEL_TOO_FEW = 4; // fewer than this starts costing
 export const LABEL_TOO_FEW_WEIGHT = 4; // too-few penalty is this × (LABEL_TOO_FEW − n)
-export const LABEL_TINY_FRAC = 0.35; // skip fragments smaller than this × median region
+export const LABEL_TINY_FRAC = 0.55; // skip fragments smaller than this × median region
 export const LABEL_FIT_PAD = 0.98; // refuse draw if glyph exceeds this of the place box
 export const LABEL_FALLBACK_PX = 16; // if fontFit fails, use this
 export const LABEL_MAX_PX = 28; // cap on large maps so glyphs do not blow up
 export const OVERLAY_MAX_PX = 160; // fallback cap for day HH:mm overlay; CSS `--overlay-max-px` wins
 export const LABEL_FILL = 0.84; // font = this × the place rectangle
-export const LABEL_OUTLIER_RATIO = 0.55; // slot smaller than this × median stays unlabeled (does not shrink the layer font)
+export const LABEL_OUTLIER_RATIO = 0.35; // slot smaller than this × median stays unlabeled (does not shrink the layer font)
 export const LABEL_LIVE_MS = 10 * MS_SEC; // live glyph place; raise to hold still, lower to chase the fill
 export const LABEL_FONT = '500 '; // CSS font-weight prefix before the px size
 export const LABEL_FONT_STACK = 'px system-ui, sans-serif';

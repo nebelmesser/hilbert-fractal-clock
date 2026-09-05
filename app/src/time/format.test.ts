@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDur, ordinalDay, romanNumeral } from './format';
+import { formatDur, monthAbbrev, ordinalDay, romanNumeral } from './format';
 
 describe('format', () => {
   it('formats nice durations without raw millisecond dumps', () => {
@@ -15,5 +15,11 @@ describe('format', () => {
     expect(ordinalDay(11)).toBe('11th');
     expect(ordinalDay(23)).toBe('23rd');
     expect(romanNumeral(21)).toBe('XXI');
+  });
+
+  it('takes the first three letters of a month name', () => {
+    expect(monthAbbrev('September')).toBe('Sep');
+    expect(monthAbbrev('May')).toBe('May');
+    expect(monthAbbrev('June')).toBe('Jun');
   });
 });

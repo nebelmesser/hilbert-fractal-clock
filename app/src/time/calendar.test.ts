@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { UNIX32_END } from '../constants';
 import {
-  advanceEndedCustom, inclusiveDatesToRange, rangeForMode, startOfDay, startOfMonth, startOfYear,
+  advanceEndedCustom, inclusiveDatesToRange, rangeForCentury, rangeForMode, startOfDay, startOfMonth, startOfYear,
 } from './calendar';
 
 describe('calendar presets', () => {
@@ -24,6 +24,17 @@ describe('calendar presets', () => {
 
   it('maps epoch to [0, UNIX32_END)', () => {
     expect(rangeForMode('epoch', Date.now(), null)).toEqual({ start: 0, end: UNIX32_END });
+  });
+
+  it('defaults Range to the current local century', () => {
+    const now = new Date(2026, 8, 2, 15, 0, 0).getTime();
+    expect(rangeForCentury(now)).toEqual({
+      start: new Date(2000, 0, 1).getTime(),
+      end: new Date(2100, 0, 1).getTime(),
+    });
+    expect(rangeForMode('arbitrary', now, null)).toEqual(rangeForCentury(now));
+    const custom = { start: 10, end: 20 };
+    expect(rangeForMode('arbitrary', now, custom)).toEqual(custom);
   });
 
   it('turns inclusive dates into a half-open engine range', () => {

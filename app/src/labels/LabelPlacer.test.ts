@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LabelPlacer, cssWithAlpha, eraseFrameBand, pickSharedLabelFont, preferLargerHalf } from './LabelPlacer';
+import { LabelPlacer, cssWithAlpha, eraseFrameBand, pickMonthGlyph, pickSharedLabelFont, preferLargerHalf } from './LabelPlacer';
 
 const theme = {
   past: 0, pastFrom: 0, pastMid: 0, pastTo: 0, pastSatDip: 0.5, future: 0xff161616, curPast: 0, curInner: 0, curFuture: 0, head: 0, surplus: 0,
@@ -127,5 +127,27 @@ describe('pickSharedLabelFont', () => {
     ], 0.55, 10);
     expect([...picked.draw].sort((a, b) => a - b)).toEqual([0, 1, 2]);
     expect(picked.fontSize).toBe(14);
+  });
+});
+
+describe('pickMonthGlyph', () => {
+  it('keeps the full name when it fits the layer slot', () => {
+    expect(pickMonthGlyph('September', 20, { w: 120, h: 24 }, { w: 40, h: 30 }, 90, 28, true))
+      .toEqual({ text: 'September', short: false });
+  });
+
+  it('falls back to three letters in the 4×3 when the full name does not fit', () => {
+    expect(pickMonthGlyph('September', 20, { w: 50, h: 24 }, { w: 40, h: 30 }, 90, 28, true))
+      .toEqual({ text: 'Sep', short: true });
+  });
+
+  it('uses the 4×3 abbrev when the full slot is an outlier', () => {
+    expect(pickMonthGlyph('February', 20, { w: 120, h: 24 }, { w: 40, h: 30 }, 70, 28, false))
+      .toEqual({ text: 'Feb', short: true });
+  });
+
+  it('stays unlabeled when neither box fits the layer font', () => {
+    expect(pickMonthGlyph('September', 40, { w: 50, h: 20 }, { w: 20, h: 15 }, 90, 28, true))
+      .toBeNull();
   });
 });

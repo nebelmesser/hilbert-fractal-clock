@@ -43,6 +43,13 @@ export function startOfCentury(d: Date): number {
   return new Date(Math.floor(d.getFullYear() / 100) * 100, 0, 1).getTime();
 }
 
+/** Half-open local century that contains `now` (2026 → 2000-01-01 … 2100-01-01). */
+export function rangeForCentury(now: number): TimeRange {
+  const d = new Date(now);
+  const y0 = Math.floor(d.getFullYear() / 100) * 100;
+  return { start: startOfCentury(d), end: new Date(y0 + 100, 0, 1).getTime() };
+}
+
 /** YYYY-MM-DD for `<input type=date>`. */
 export function localDateValue(t: number): string {
   const d = new Date(t);
@@ -71,7 +78,7 @@ export function rangeForMode(id: ModeId, now: number, arbitrary: TimeRange | nul
   if (id === 'epoch') {
     return { start: 0, end: UNIX32_END };
   }
-  if (id === 'arbitrary' && arbitrary) return arbitrary;
+  if (id === 'arbitrary') return arbitrary || rangeForCentury(now);
   return { start: startOfDay(d), end: new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime() };
 }
 

@@ -1,6 +1,7 @@
-import { LABEL_FILL, LABEL_FONT, LABEL_FONT_STACK, ZOOM_FRAME_OUTSET, ZOOM_FRAME_W } from '../constants';
+import { LABEL_FILL, LABEL_FIT_PAD, LABEL_FONT, LABEL_FONT_STACK, ZOOM_FRAME_OUTSET, ZOOM_FRAME_W } from '../constants';
 import { median } from '../math';
 import { boundStrokeFromFill } from '../theme/pastRamp';
+import { monthAbbrev } from '../time/format';
 import type { CellBox, LabelPlace, LabelSlotKind, ThemeColors } from '../types';
 
 /** Visit every maximal axis-aligned rectangle in a binary mask. */
@@ -144,6 +145,40 @@ export function pickSharedLabelFont(
     fontSize: median(pool.map((s) => s.px)),
     draw: new Set(pool.map((s) => s.i)),
   };
+}
+
+/** Glyph fits the place box at the layer font (`LABEL_FIT_PAD`). */
+export function glyphFits(
+  textW: number,
+  fontPx: number,
+  boxW: number,
+  boxH: number,
+  pad = LABEL_FIT_PAD,
+): boolean {
+  return textW <= boxW * pad && fontPx <= boxH * pad;
+}
+
+/**
+ * Month labels: full name in the layer slot when it fits; else first three
+ * letters in a 4×3, same font as the rest of the layer.
+ */
+export function pickMonthGlyph(
+  full: string,
+  fontPx: number,
+  fullBox: { w: number; h: number },
+  shortBox: { w: number; h: number } | null,
+  fullW: number,
+  shortW: number,
+  allowFull: boolean,
+): { text: string; short: boolean } | null {
+  if (allowFull && fullBox.w > 0 && fullBox.h > 0 && glyphFits(fullW, fontPx, fullBox.w, fullBox.h)) {
+    return { text: full, short: false };
+  }
+  const short = monthAbbrev(full);
+  if (shortBox && shortBox.w > 0 && shortBox.h > 0 && glyphFits(shortW, fontPx, shortBox.w, shortBox.h)) {
+    return { text: short, short: true };
+  }
+  return null;
 }
 
 /** Centre of mass of filled mask cells. */

@@ -1,6 +1,11 @@
 import { FORMAT_MAX_PARTS, MS_100, MS_DAY, MS_HOUR, MS_MIN, MS_SEC, ORDINAL_TEEN_HI, ORDINAL_TEEN_LO } from '../constants';
 import { pad2, pad3 } from '../math';
 
+/** First three letters of a full English month name (`September` → `Sep`). */
+export function monthAbbrev(name: string): string {
+  return name.slice(0, 3);
+}
+
 /** 1st, 2nd, 3rd, 4th…11th…21st — calendar days, not zero-padded hours. */
 export function ordinalDay(n: number): string {
   const mod100 = n % 100;

@@ -3,7 +3,8 @@ import {
   LABEL_FALLBACK_PX, LABEL_FIT_PAD, LABEL_FONT, LABEL_FONT_STACK,
   LABEL_LIVE_MS, LABEL_MAX_PX, LABEL_OUTLIER_RATIO, LABEL_TINY_FRAC,
 } from '../constants';
-import { LabelPlacer, cellInBox, eraseFrameBand, labelSlotKind, maskCentroid, pickSharedLabelFont, preferLargerHalf, zoomFramePadCells } from '../labels/LabelPlacer';
+import { LabelPlacer, cellInBox, eraseFrameBand, labelSlotKind, maskCentroid, pickMonthGlyph, pickSharedLabelFont, preferLargerHalf, zoomFramePadCells } from '../labels/LabelPlacer';
+import { monthAbbrev } from '../time/format';
 import { median } from '../math';
 import { innerCurId, pastColorAt, rampCurId, resolveInner, resolveRamp } from '../theme/pastRamp';
 import type { CellBox, LabelPlace, LabelSlotKind, MapLayout, ThemeColors, TimeUnit } from '../types';
@@ -41,6 +42,7 @@ type Item = {
   place: LabelPlace;
   ox: number;
   oy: number;
+  shortPlace?: LabelPlace;
 };
 
 type LabelRegion = {
@@ -70,6 +72,8 @@ export class LabelRenderer {
   /**
    * Layer-wide slot (square / 4×3 / 16×9); one font from typical slots.
    * Much-smaller slots stay unlabeled so they cannot shrink the rest.
+   * Months: full English name when it fits; else first three letters in a 4×3
+   * at the same layer font.
    * Live glyph stays `--label-live*`. Other glyphs use the block fill plus `--label-*-alpha`.
    * On the inset, the parent unit is drawn first (faint, uncapped) under the local labels.
    */
@@ -232,6 +236,7 @@ export class LabelRenderer {
     }
 
     const kind = labelSlotKind(texts);
+    const isMonth = unit.id === 'month';
     const liveSlot = Math.floor(now / LABEL_LIVE_MS);
     const zoomKey = zoomBox ? zoomBox.x + ',' + zoomBox.y + ',' + zoomBox.w + 'x' + zoomBox.h : '';
     const items: Item[] = [];
@@ -243,19 +248,19 @@ export class LabelRenderer {
       const placeKey = opts.keyPrefix + p.ox + ':' + p.oy + ':' + p.text + ':' + zoomKey;
       const pinned = timeLapse && nextPlaces && nextPlaces.get(placeKey);
       if (pinned && pinned.kind === kind) {
-        items.push({ text: p.text, n: p.n, color: p.color, place: pinned.place, ox: p.ox, oy: p.oy });
+        items.push(this.withMonthShort(p, { text: p.text, n: p.n, color: p.color, place: pinned.place, ox: p.ox, oy: p.oy }, isMonth));
         continue;
       }
       const cached = nextLive;
       if (!timeLapse && p.live && cached && cached.slot === liveSlot && cached.text === p.text &&
           cached.ox === p.ox && cached.oy === p.oy &&
           cached.onFilled === p.onFilled && cached.kind === kind && cached.zoomKey === zoomKey) {
-        items.push({ text: p.text, n: p.n, color: p.color, place: cached.place, ox: cached.ox, oy: cached.oy });
+        items.push(this.withMonthShort(p, { text: p.text, n: p.n, color: p.color, place: cached.place, ox: cached.ox, oy: cached.oy }, isMonth));
         continue;
       }
       const mid = maskCentroid(p.placeMask, p.bw, p.bh);
       const place = this.placer.largestSlotInMask(p.placeMask, p.bw, p.bh, kind, mid.x, mid.y);
-      const item = { text: p.text, n: p.n, color: p.color, place, ox: p.ox, oy: p.oy };
+      const item = this.withMonthShort(p, { text: p.text, n: p.n, color: p.color, place, ox: p.ox, oy: p.oy }, isMonth);
       if (!timeLapse && p.live) {
         nextLive = { slot: liveSlot, text: p.text, place, ox: p.ox, oy: p.oy, onFilled: p.onFilled, kind, zoomKey };
       }
@@ -284,24 +289,44 @@ export class LabelRenderer {
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    let lastPx = -1;
+    ctx.font = LABEL_FONT + fontSize + LABEL_FONT_STACK;
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       const pr = it.place;
       if (!pr || !pr.area) continue;
       if (it.n < med * LABEL_TINY_FRAC) continue;
-      if (!picked.draw.has(i)) continue;
-      const px = fontSize;
-      if (px !== lastPx) {
-        ctx.font = LABEL_FONT + px + LABEL_FONT_STACK;
-        lastPx = px;
+      let text = it.text;
+      let box = pr;
+      if (isMonth) {
+        const short = it.shortPlace && it.shortPlace.area ? it.shortPlace : null;
+        const glyph = pickMonthGlyph(
+          it.text, fontSize,
+          { w: pr.w * cw, h: pr.h * ch },
+          short ? { w: short.w * cw, h: short.h * ch } : null,
+          ctx.measureText(it.text).width,
+          ctx.measureText(monthAbbrev(it.text)).width,
+          picked.draw.has(i),
+        );
+        if (!glyph) continue;
+        text = glyph.text;
+        box = glyph.short && short ? short : pr;
+      } else {
+        if (!picked.draw.has(i)) continue;
+        const tw = ctx.measureText(it.text).width;
+        if (tw > pr.w * cw * LABEL_FIT_PAD || fontSize > pr.h * ch * LABEL_FIT_PAD) continue;
       }
-      const tw = ctx.measureText(it.text).width;
-      if (tw > pr.w * cw * LABEL_FIT_PAD || px > pr.h * ch * LABEL_FIT_PAD) continue;
       ctx.fillStyle = it.color;
-      ctx.fillText(it.text, (it.ox + pr.x + pr.w / 2) * cw, (it.oy + pr.y + pr.h / 2) * ch);
+      ctx.fillText(text, (it.ox + box.x + box.w / 2) * cw, (it.oy + box.y + box.h / 2) * ch);
     }
     return { liveLabel: timeLapse ? opts.liveLabel : nextLive, labelPlaces: nextPlaces };
+  }
+
+  /** 4×3 fallback slot for a month abbrev; same mask as the full-name place. */
+  private withMonthShort(p: Pending, item: Item, isMonth: boolean): Item {
+    if (!isMonth) return item;
+    const mid = maskCentroid(p.placeMask, p.bw, p.bh);
+    item.shortPlace = this.placer.largestSlotInMask(p.placeMask, p.bw, p.bh, '4x3', mid.x, mid.y);
+    return item;
   }
 
   /** Cells grouped by unit id, with a bounding box. Cached — the groups do not move. */
