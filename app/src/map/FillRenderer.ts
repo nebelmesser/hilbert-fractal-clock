@@ -1,4 +1,4 @@
-import { pastColorAt, resolveRamp } from '../theme/pastRamp';
+import { cellFillPixel, innerCurId, pastColorAt, resolveInner, resolveRamp } from '../theme/pastRamp';
 import type { MapLayout, ThemeColors } from '../types';
 
 type FillBuf = { w: number; h: number; img: ImageData; buf: Uint32Array };
@@ -9,8 +9,9 @@ export class FillRenderer {
 
   /**
    * Fill along the curve up to now.
-   * Elapsed first-level blocks use the last elapsed fraction of `--past-from` → `--cur-past`;
-   * the live block stays pink.
+   * Elapsed first-level blocks use the last elapsed fraction of
+   * `--past-from` → `--past-mid` → `--past-to`; the live L1 block is `--cur-past`.
+   * The elapsed part of the live L2 block (parent's second unit on the inset) is `--cur-inner`.
    */
   paint(
     ctx: CanvasRenderingContext2D,
@@ -24,22 +25,20 @@ export class FillRenderer {
     const buf = rec.buf;
     buf.fill(theme.surplus);
     const { ids, minId, maxId, pinkId } = resolveRamp(layout, curId);
+    const inner = resolveInner(layout);
+    const innerId = innerCurId(layout, now);
+    const innerIds = inner ? inner.ids : null;
     const n = grid.cells;
     const dur = grid.cellDur;
     const colorAt = ids ? pastColorAt(theme, minId, maxId, pinkId, curId) : null;
     for (let i = 0; i < n; i++) {
       const p = g.xs[i] + g.ys[i] * grid.w;
       const t0 = cellStart[i];
-      const inCur = curId != null && ids && ids[i] === curId;
-      if (now >= t0 + dur) {
-        buf[p] = colorAt && ids
-          ? colorAt(ids[i])
-          : (inCur ? theme.curPast : theme.past);
-      } else if (now >= t0) {
-        buf[p] = theme.head;
-      } else {
-        buf[p] = inCur ? theme.curFuture : theme.future;
-      }
+      const l1Id = ids ? ids[i] : 0;
+      buf[p] = cellFillPixel(
+        theme, now, t0, dur, l1Id, curId,
+        innerIds ? innerIds[i] : undefined, innerId, colorAt,
+      );
     }
     ctx.putImageData(rec.img, 0, 0);
   }

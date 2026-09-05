@@ -5,7 +5,7 @@ import {
 } from '../constants';
 import { LabelPlacer, cellInBox, eraseFrameBand, labelSlotKind, maskCentroid, pickSharedLabelFont, preferLargerHalf, zoomFramePadCells } from '../labels/LabelPlacer';
 import { median } from '../math';
-import { pastColorAt, rampCurId, resolveRamp } from '../theme/pastRamp';
+import { innerCurId, pastColorAt, rampCurId, resolveInner, resolveRamp } from '../theme/pastRamp';
 import type { CellBox, LabelPlace, LabelSlotKind, MapLayout, ThemeColors, TimeUnit } from '../types';
 
 export type LiveLabelCache = {
@@ -54,6 +54,9 @@ type LayerOpts = {
   keyPrefix: string;
   capPx: number | null;
   alphas?: { filled: number; empty: number; live?: number };
+  innerIds: Int32Array | null;
+  innerId: number | null;
+  innerUnitId: string | null;
 };
 
 /** Draw unit labels: one slot kind per layer, pinned places in timelapse. */
@@ -92,6 +95,8 @@ export class LabelRenderer {
     const curId = rampCurId(layout, now, t0, t1);
     const { ids: ids0, minId, maxId, pinkId } = resolveRamp(layout, curId);
     const colorAt = ids0 ? pastColorAt(theme, minId, maxId, pinkId, curId) : null;
+    const inner = resolveInner(layout);
+    const innerId = innerCurId(layout, now);
     let nextPlaces = labelPlaces;
     let nextEcho = echoLive;
 
@@ -103,6 +108,9 @@ export class LabelRenderer {
         keyPrefix: 'echo:',
         capPx: null,
         alphas: { filled: LABEL_ECHO_ALPHA, empty: LABEL_ECHO_EMPTY_ALPHA, live: LABEL_ECHO_LIVE_ALPHA },
+        innerIds: inner ? inner.ids : null,
+        innerId,
+        innerUnitId: inner ? inner.unit.id : null,
       });
       nextEcho = timeLapse ? echoLive : painted.liveLabel;
       nextPlaces = painted.labelPlaces;
@@ -119,6 +127,9 @@ export class LabelRenderer {
       labelPlaces: nextPlaces,
       keyPrefix: '',
       capPx: LABEL_MAX_PX,
+      innerIds: inner ? inner.ids : null,
+      innerId,
+      innerUnitId: inner ? inner.unit.id : null,
     });
     return {
       liveLabel: timeLapse ? liveLabel : local.liveLabel,
@@ -201,9 +212,13 @@ export class LabelRenderer {
       else onFilled = tMax <= now;
       const sample = region.idx[0];
       const l1 = ids0Id(layout, sample);
-      const fill = onFilled
-        ? (colorAt ? colorAt(l1) : theme.past)
-        : (curId != null && l1 === curId ? theme.curFuture : theme.future);
+      const inInner = onFilled && opts.innerUnitId === unit.id &&
+        opts.innerId != null && opts.innerIds != null && opts.innerIds[sample] === opts.innerId;
+      const fill = inInner
+        ? theme.curInner
+        : onFilled
+          ? (colorAt ? colorAt(l1) : theme.past)
+          : (curId != null && l1 === curId ? theme.curFuture : theme.future);
       pending.push({
         text, n: region.idx.length, live, onFilled,
         placeMask, bw, bh,

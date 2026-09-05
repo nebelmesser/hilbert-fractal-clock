@@ -111,6 +111,8 @@ export type MapLayout = {
   cellStart: Float64Array;
   inherit?: Int32Array[];
   ramp?: RampShare;
+  /** Parent L2 ids so the inset paints the same inner current block as the main map. */
+  inner?: { unit: TimeUnit; ids: Int32Array };
   /** Parent label unit, drawn large and faint under the inset's own labels. */
   echo?: { unit: TimeUnit; ids: Int32Array };
 };
@@ -122,9 +124,12 @@ export type LabelPlace = { x: number; y: number; w: number; h: number; area: num
 export type ThemeColors = {
   past: number;
   pastFrom: number;
+  pastMid: number;
+  pastTo: number;
   pastSatDip: number;
   future: number;
   curPast: number;
+  curInner: number;
   curFuture: number;
   head: number;
   surplus: number;

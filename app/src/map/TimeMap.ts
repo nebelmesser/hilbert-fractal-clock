@@ -6,7 +6,7 @@ import type { GridPlanner } from '../grid/GridPlanner';
 import { clamp } from '../math';
 import type { ClockTime } from '../time/ClockTime';
 import { formatDur, formatMoment, formatRange } from '../time/format';
-import { l1RampSpan, rampCurId } from '../theme/pastRamp';
+import { innerCurId, l1RampSpan, rampCurId } from '../theme/pastRamp';
 import { fillUnitIds } from '../time/units';
 import type { Theme } from '../theme/Theme';
 import type {
@@ -200,7 +200,11 @@ export class TimeMap {
     const echo = parentLabel && (!localLabel || parentLabel.id !== localLabel.id)
       ? { unit: parentLabel, ids: fillUnitIds(parentLabel, cellDur, grid.cells, cellStart) }
       : undefined;
-    this.layout = { grid, g, levels, levelIds, labelLevel, cssWidth, cellStart, inherit, ramp, echo };
+    const parentInner = parentLayout.levels[1];
+    const inner = parentInner
+      ? { unit: parentInner, ids: fillUnitIds(parentInner, cellDur, grid.cells, cellStart) }
+      : undefined;
+    this.layout = { grid, g, levels, levelIds, labelLevel, cssWidth, cellStart, inherit, ramp, echo, inner };
     const keepW = this.tileW;
     const keepH = this.tileH;
     this.tileW = keepW > 0 ? keepW : cssWidth;
@@ -452,16 +456,18 @@ export class TimeMap {
     const localCurId = levels[0] && now >= this.start && now < this.end
       ? levels[0].index(now) : null;
     const curId = rampCurId(this.layout, now, this.start, this.end);
-    const key = nowKey + ':' + curId + ':' + localCurId;
+    const nestId = innerCurId(this.layout, now);
+    const unitKey = localCurId + ':' + nestId;
+    const key = nowKey + ':' + curId + ':' + unitKey;
     if (!force && key === this._lastKey) return;
-    const unitChanged = !this._lastKey.endsWith(':' + localCurId);
+    const unitChanged = !this._lastKey.endsWith(':' + unitKey);
     this._lastKey = key;
     this.host.fill.paint(this.ctxBase, this.layout, now, this.host.theme.colors, curId);
     this._renderBounds(now, curId);
     const labelUnit = levels[labelLevel || 0];
     const z = this.zoomBox;
     const zkey = z ? z.x + ',' + z.y + ',' + z.w + 'x' + z.h : '';
-    const labelKey = curId + ':' + localCurId + ':' + (labelUnit ? labelUnit.index(now) : '') + ':' + zkey;
+    const labelKey = curId + ':' + unitKey + ':' + (labelUnit ? labelUnit.index(now) : '') + ':' + zkey;
     if (force || !this.host.clock.timeLapse || labelKey !== this._lastLabelKey) {
       this._renderLabels(now);
       this._lastLabelKey = labelKey;

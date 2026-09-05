@@ -1,6 +1,6 @@
 import { BOUND_W, HAIR_GAIN, HAIR_MAX, HAIR_MIN, HAIR_REF_PX, INHERIT_W } from '../constants';
 import { clamp } from '../math';
-import { boundStrokeFromFill, pastColorAt, resolveRamp } from '../theme/pastRamp';
+import { boundStrokeFromFill, innerCurId, pastColorAt, resolveInner, resolveRamp } from '../theme/pastRamp';
 import type { MapLayout, ThemeColors } from '../types';
 
 /** Flat edge list: cell index + CSS segment, 5 numbers per edge. */
@@ -67,10 +67,13 @@ export class BoundRenderer {
     const ch = cssH / grid.h;
     const labelLi = layout.labelLevel || 0;
     const { ids: ids0, minId, maxId, pinkId } = resolveRamp(layout, curId);
+    const inner = resolveInner(layout);
+    const innerId = innerCurId(layout, now);
     const dur = grid.cellDur;
     const colorAt = ids0 ? pastColorAt(theme, minId, maxId, pinkId, curId) : null;
     const futureKey = 0x7fffffff;
     const curFutureKey = 0x7ffffffe;
+    const innerKey = 0x7ffffffd;
     const rec = this.geometry(layout, cssW, cssH);
     for (let li = levels.length - 1; li >= 0; li--) {
       const cellsPer = Math.max(1, levels[li].typical / grid.cellDur);
@@ -90,7 +93,10 @@ export class BoundRenderer {
       this.strokeEdges(
         ctx, edges, lw,
         (i) => {
-          if (now >= cellStart[i] + dur) return ids0[i];
+          if (now >= cellStart[i] + dur) {
+            if (inner && innerId != null && inner.ids[i] === innerId) return innerKey;
+            return ids0[i];
+          }
           if (curId != null && ids0[i] === curId) return curFutureKey;
           return futureKey;
         },
@@ -99,6 +105,7 @@ export class BoundRenderer {
           if (s) return s;
           if (key === futureKey) s = boundStrokeFromFill(theme.future, alpha);
           else if (key === curFutureKey) s = boundStrokeFromFill(theme.curFuture, alpha);
+          else if (key === innerKey) s = boundStrokeFromFill(theme.curInner, alpha);
           else s = boundStrokeFromFill(colorAt(key), alpha);
           strokeMemo.set(key, s);
           return s;

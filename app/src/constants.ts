@@ -120,7 +120,7 @@ export const BOUND_ALPHA_1 = 0.55; // L1 opacity vs the cell fill. Raise = stron
 export const BOUND_ALPHA_2 = 0.28; // L2 opacity vs the cell fill
 export const BOUND_ALPHA_3 = 0.12; // L3/hair opacity vs the cell fill
 export const BOUND_LUMA_SPLIT = 70; // fill luma below this → white overlay (future); else black overlay (past)
-export const PAST_SAT_DIP = 0.5; // HSL sat cut at ramp midpoint (4t(1−t)). 0 = linear; 1 = gray mid.
+export const PAST_SAT_DIP = 0.5; // HSL sat cut inside each ramp half (4t(1−t)). 0 = linear; 1 = gray mid-of-half.
 
 // Fit / chrome. Changing these changes packing, overflow shrink, and F / resize timing.
 export const STAGE_MIN_W = 160; // floor for stage / probe width

@@ -1,6 +1,6 @@
 import { BOUND_LUMA_SPLIT } from '../constants';
 import { clamp } from '../math';
-import type { MapLayout, ThemeColors } from '../types';
+import type { MapLayout, ThemeColors, TimeUnit } from '../types';
 
 /**
  * First-level id span used by the violet→pink past ramp.
@@ -40,6 +40,50 @@ export function resolveRamp(
   }
   const ids = layout.levelIds[0];
   return { ids, ...l1RampSpan(ids, layout.grid.cells, curId) };
+}
+
+/** Parent L2 (inset) or the map's own second ladder unit. */
+export function resolveInner(layout: MapLayout): { unit: TimeUnit; ids: Int32Array } | null {
+  if (layout.inner) return layout.inner;
+  const unit = layout.levels[1];
+  const ids = layout.levelIds[1];
+  return unit && ids ? { unit, ids } : null;
+}
+
+/** Live inner-unit id while `now` sits on this map. */
+export function innerCurId(layout: MapLayout, now: number): number | null {
+  const inner = resolveInner(layout);
+  if (!inner) return null;
+  const n = layout.grid.cells;
+  if (!n) return null;
+  const t0 = layout.cellStart[0];
+  const t1 = layout.cellStart[n - 1] + layout.grid.cellDur;
+  if (now < t0 || now >= t1) return null;
+  return inner.unit.index(now);
+}
+
+/**
+ * One cell: `--head` at now; elapsed live inner unit is `--cur-inner`;
+ * other elapsed L1 is the ramp / `--cur-past`; else `--cur-future` / `--future`.
+ */
+export function cellFillPixel(
+  theme: ThemeColors,
+  now: number,
+  t0: number,
+  dur: number,
+  l1Id: number,
+  curId: number | null,
+  l2Id: number | undefined,
+  innerId: number | null,
+  colorAt: ((id: number) => number) | null,
+): number {
+  if (now >= t0 && now < t0 + dur) return theme.head;
+  if (now >= t0 + dur) {
+    if (innerId != null && l2Id === innerId) return theme.curInner;
+    if (colorAt) return colorAt(l1Id);
+    return curId != null && l1Id === curId ? theme.curPast : theme.past;
+  }
+  return curId != null && l1Id === curId ? theme.curFuture : theme.future;
 }
 
 /** Live first-level id for the shared ramp, or the map's own L1. */
@@ -107,8 +151,8 @@ export function hslToRgb(h: number, s: number, l: number): [number, number, numb
 
 /**
  * Blend packed pixels in HSL, taking the shorter hue arc.
- * `--past-from` → `--cur-past` walks through magenta, not green.
- * `satDip` scales saturation by `1 − dip × 4t(1−t)` so the midpoint is quieter than a linear HSL mix.
+ * `--past-from` → `--past-mid` → `--past-to` walks the shorter hue, not the long way around.
+ * `satDip` scales saturation by `1 − dip × 4t(1−t)` so the mid-of-segment is quieter than a linear HSL mix.
  */
 export function lerpHslPacked(a: number, b: number, t: number, satDip = 0): number {
   t = clamp(t, 0, 1);
@@ -126,11 +170,20 @@ export function lerpHslPacked(a: number, b: number, t: number, satDip = 0): numb
   return ((al << 24) | (bl << 16) | (g << 8) | r) >>> 0;
 }
 
+/** t=0 → from, t=0.5 → mid, t=1 → to. satDip mutes each half, not the mid stop. */
+export function lerpRampPacked(from: number, mid: number, to: number, t: number, satDip = 0): number {
+  t = clamp(t, 0, 1);
+  if (t <= 0) return from;
+  if (t >= 1) return to;
+  if (t <= 0.5) return lerpHslPacked(from, mid, t * 2, satDip);
+  return lerpHslPacked(mid, to, (t - 0.5) * 2, satDip);
+}
+
 /**
- * Elapsed first-level block color: `--past-from` (violet) → `--cur-past` (pink).
- * The live block is always exactly `--cur-past`.
+ * Elapsed first-level block color: `--past-from` → `--past-mid` → `--past-to`.
+ * The live block is always exactly `--cur-past`, which is not a ramp stop.
  * Only the elapsed fraction of the map uses the ramp: a quarter filled draws the last quarter
- * (closest to pink), so `--past-from` is reached only by blocks long in the past.
+ * (closest to `--past-to`), so `--past-from` is reached only by blocks long in the past.
  */
 export function pastBlockPixel(
   theme: ThemeColors,
@@ -143,9 +196,9 @@ export function pastBlockPixel(
   if (curId != null && id === curId) return theme.curPast;
   const full = maxId - minId;
   if (!(full > 0) || !Number.isFinite(minId)) {
-    return pinkId === id ? theme.curPast : theme.pastFrom;
+    return pinkId === id ? theme.pastTo : theme.pastFrom;
   }
-  return lerpHslPacked(theme.pastFrom, theme.curPast, 1 - (pinkId - id) / full, theme.pastSatDip ?? 0);
+  return lerpRampPacked(theme.pastFrom, theme.pastMid, theme.pastTo, 1 - (pinkId - id) / full, theme.pastSatDip ?? 0);
 }
 
 /**

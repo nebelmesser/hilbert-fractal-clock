@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { LabelPlacer, cssWithAlpha, eraseFrameBand, pickSharedLabelFont, preferLargerHalf } from './LabelPlacer';
 
 const theme = {
-  past: 0, pastFrom: 0, pastSatDip: 0.5, future: 0xff161616, curPast: 0, curFuture: 0, head: 0, surplus: 0,
+  past: 0, pastFrom: 0, pastMid: 0, pastTo: 0, pastSatDip: 0.5, future: 0xff161616, curPast: 0, curInner: 0, curFuture: 0, head: 0, surplus: 0,
   labelAlpha: 0.38, labelEmptyAlpha: 0.34,
   labelLive: 'live', labelLiveEmpty: 'live-empty',
   currentOutline: '', zoom: '', bound0: '', boundAlpha1: 0.55, boundAlpha2: 0.28, boundAlpha3: 0.12,

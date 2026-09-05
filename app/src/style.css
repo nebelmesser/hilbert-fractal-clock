@@ -9,11 +9,14 @@
       --accent: #e8918e; /* pressed preset label */
       --input-bg: #111; /* Custom date fields */
       --past: #a6a6a6; /* fallback elapsed fill if there is no first-level ladder */
-      --past-from: #5e5f62; /* far-past end of the ramp; reached only when the range is mostly elapsed */
-      --past-sat-dip: 0.5; /* mute HSL saturation at the ramp midpoint; 0 = linear, 1 = gray mid */
+      --past-from: #505152; /* far-past end of the ramp; reached only when the range is mostly elapsed */
+      --past-mid: #797285; /* ramp midpoint; elapsed half-way from --past-from to --past-to */
+      --past-to: #d0a5a5; /* near-past end of the ramp — not the live block */
+      --past-sat-dip: 0.5; /* mute HSL saturation inside each ramp half; 0 = linear, 1 = gray mid-of-half */
       --future: #161616; /* cells still ahead */
-      --cur-past: #d0a5a5; /* live first-level fill + pink end of the past ramp */
-      --cur-future: #3a2222; /* remaining cells inside the live unit */
+      --cur-past: #cd9898; /* live first-level fill (month on a year, hour on a day) */
+      --cur-inner: #db8181; /* elapsed part of the live unit one step finer (day on a year, minute on a day) */
+      --cur-future: #3a2222; /* remaining cells inside the live first-level unit */
       --head: #ff0000; /* the living cell (now) */
       --surplus: #000000; /* leftover cells past the range */
       --label-alpha: 0.38; /* past glyph: black overlay on the block fill */

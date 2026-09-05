@@ -4,7 +4,7 @@ import type { ThemeColors } from '../types';
 /** Read map / label / bound colors from :root CSS custom properties. */
 export class Theme {
   colors: ThemeColors = {
-    past: 0, pastFrom: 0, pastSatDip: PAST_SAT_DIP, future: 0, curPast: 0, curFuture: 0, head: 0, surplus: 0,
+    past: 0, pastFrom: 0, pastMid: 0, pastTo: 0, pastSatDip: PAST_SAT_DIP, future: 0, curPast: 0, curInner: 0, curFuture: 0, head: 0, surplus: 0,
     labelAlpha: LABEL_ALPHA, labelEmptyAlpha: LABEL_EMPTY_ALPHA, labelLive: '', labelLiveEmpty: '',
     currentOutline: '', zoom: '',
     bound0: '',
@@ -46,9 +46,12 @@ export class Theme {
     this.colors = {
       past: this.cssPixel('--past'),
       pastFrom: this.cssPixel('--past-from'),
+      pastMid: this.cssPixel('--past-mid'),
+      pastTo: this.cssPixel('--past-to'),
       pastSatDip: this.cssNumber('--past-sat-dip', PAST_SAT_DIP),
       future: this.cssPixel('--future'),
       curPast: this.cssPixel('--cur-past'),
+      curInner: this.cssPixel('--cur-inner'),
       curFuture: this.cssPixel('--cur-future'),
       head: this.cssPixel('--head'),
       surplus: this.cssPixel('--surplus'),
