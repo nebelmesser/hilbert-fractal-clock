@@ -119,12 +119,26 @@ hour (`HH`) → minute (`HH:MM`) → second (`HH:MM:SS`) → ms100 → ms10 → 
 
 - One label level: prefer days on a ~month view (`LABEL_DAY_MIN` … `MAX`),
   else ~18 regions (`LABEL_TARGET_REGIONS`)
-- Layer-wide slot: square / 4×3 / 16×9, **horizontal only** (never 3×4 / 9×16)
-- One font size per layer, except a single small outlier
-  (`LABEL_OUTLIER_RATIO`)
+- Text stays horizontal. Measure actual glyph ink bounds rather than choosing
+  square / 4×3 / 16×9 slots from character counts
+- Fit and center using measurements at the final font size; system-font
+  optical sizing means bounds measured at 100 px cannot simply be scaled down
+- Enumerate maximal rectangles contained in the allowed region. Maximize the
+  common font size across all retained regions, reserving `LABEL_PADDING_EM`
+  (0.25 em) of equal clearance on every side before choosing the size,
+  and `LABEL_MAX_PX` as the local-label cap (inherited watermarks are uncapped)
+- At that size, maximize the minimum distance from the ink rectangle to the
+  region boundary. Among equally spacious positions, choose the one nearest
+  the area centroid. Centering must not pull a label against a boundary
+- Only regions below `LABEL_TINY_FRAC` × median region area may be omitted;
+  omit at most `LABEL_MAX_OMISSIONS` (3), smallest first. Slot shape alone
+  must never cause a label to be omitted
+- The yellow frame is an obstacle with its actual stroke width; search both
+  sides instead of discarding the side with less area
 - Live glyph in wall-clock mode: place is refreshed every `LABEL_LIVE_MS`
-  (10s). For a live unit that is not `second`, placement uses the filled or
-  empty half
+  (10s). For a live unit that is not `second`, search both filled and empty
+  parts using the same clearance objective. Keep the entire glyph on one
+  background; choose its live color from the selected room
 - **Speedup / timelapse (`speedup ≠ 1`):** live / past / empty **colors**
   follow `now`; **`placeMask` stays the full region**; glyph slots are pinned
   (`_labelPlaces`); `_liveLabel` is not cached

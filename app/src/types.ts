@@ -117,8 +117,6 @@ export type MapLayout = {
   echo?: { unit: TimeUnit; ids: Int32Array };
 };
 
-export type LabelSlotKind = 'square' | '4x3' | '16x9';
-
 export type LabelPlace = { x: number; y: number; w: number; h: number; area: number };
 
 export type ThemeColors = {

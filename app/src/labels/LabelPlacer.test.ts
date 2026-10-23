@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { LabelPlacer, cssWithAlpha, eraseFrameBand, pickMonthGlyph, pickSharedLabelFont, preferLargerHalf } from './LabelPlacer';
+import { LABEL_PADDING_EM } from '../constants';
+import { LabelPlacer, cssWithAlpha, eraseFrameBand, pickSharedLabelFont, type GlyphMetrics } from './LabelPlacer';
 
 const theme = {
   past: 0, pastFrom: 0, pastMid: 0, pastTo: 0, pastSatDip: 0.5, future: 0xff161616, curPast: 0, curInner: 0, curFuture: 0, head: 0, surplus: 0,
@@ -9,6 +10,7 @@ const theme = {
 };
 
 const pink = 0xffa4a4c7;
+const wideGlyph: GlyphMetrics = { left: 0, right: 3, ascent: 0.8, descent: 0.2, width: 3, height: 1 };
 
 describe('LabelPlacer', () => {
   it('keeps the live glyph red and derives others from the block fill', () => {
@@ -29,125 +31,118 @@ describe('LabelPlacer', () => {
     expect(cssWithAlpha('#abc', 0.5)).toBe('rgba(170,187,204,0.5)');
   });
 
-  it('keeps placeMask on the full region in timelapse', () => {
+  it('uses the actual text aspect ratio and can place text in a shallow strip', () => {
     const p = new LabelPlacer();
-    const full = new Uint8Array([1, 1, 0]);
-    const past = new Uint8Array([1, 0, 0]);
-    const future = new Uint8Array([0, 1, 0]);
-    const placed = p.placeMaskForRegion({
-      timeLapse: true, live: true, unitId: 'hour',
-      full, past, future, nPast: 1, nFuture: 1,
-    });
-    expect(placed.placeMask).toBe(full);
-    expect(placed.onFilled).toBe(true);
+    const mask = new Uint8Array(20 * 10);
+    mask.fill(1, 0, 40);
+    for (let y = 6; y < 10; y++) mask.fill(1, y * 20, y * 20 + 4);
+    const geometry = p.geometry(mask, 20, 10);
+    const size = p.maxFont(geometry, wideGlyph, 1, 1);
+    expect(size).toBeCloseTo(2 / (1 + 2 * LABEL_PADDING_EM));
+    const place = p.placeGlyph(geometry, wideGlyph, size, 1, 1)!;
+    expect(place.y).toBeGreaterThanOrEqual(0);
+    expect(place.y + place.h).toBeLessThanOrEqual(2);
   });
 
-  it('uses the filled half for a live non-second unit in wall-clock mode', () => {
+  it('centers in the spacious interior instead of following a centroid into a narrow arm', () => {
     const p = new LabelPlacer();
-    const full = new Uint8Array([1, 1]);
-    const past = new Uint8Array([1, 0]);
-    const future = new Uint8Array([0, 1]);
-    const placed = p.placeMaskForRegion({
-      timeLapse: false, live: true, unitId: 'hour',
-      full, past, future, nPast: 4, nFuture: 1,
-    });
-    expect(placed.placeMask).toBe(past);
-    expect(placed.onFilled).toBe(true);
+    const mask = new Uint8Array(30 * 10);
+    for (let y = 0; y < 10; y++) mask.fill(1, y * 30, y * 30 + 10);
+    for (let y = 4; y < 6; y++) mask.fill(1, y * 30 + 10, y * 30 + 30);
+    const geometry = p.geometry(mask, 30, 10);
+    const box = p.placeGlyph(geometry, wideGlyph, 1, 1, 1)!;
+    expect(box.x + box.w / 2).toBeCloseTo(5);
+    expect(box.y + box.h / 2).toBeCloseTo(geometry.cy);
   });
 
-  it('keeps the larger half when a rect cuts the region, like a live unit', () => {
-    const base = new Uint8Array([1, 1, 1, 1, 1]);
-    const outBox = new Uint8Array([1, 1, 1, 0, 0]);
-    const inBox = new Uint8Array([0, 0, 0, 1, 1]);
-    expect([...preferLargerHalf(base, outBox, inBox)]).toEqual([...outBox]);
-  });
-
-  it('leaves the mask alone when the zoom box does not split the region', () => {
-    const base = new Uint8Array([1, 1, 0]);
-    const outBox = new Uint8Array([1, 1, 1]);
-    const inBox = new Uint8Array([0, 0, 0]);
-    expect(preferLargerHalf(base, outBox, inBox)).toBe(base);
-  });
-
-  it('places the glyph slot entirely in the larger half of a cut region', () => {
+  it('keeps the text and its padding away from the actual frame stroke', () => {
     const p = new LabelPlacer();
-    const bw = 8, bh = 4;
-    const full = new Uint8Array(bw * bh).fill(1);
-    const inBox = new Uint8Array(bw * bh);
-    const outBox = new Uint8Array(bw * bh);
-    for (let y = 0; y < bh; y++) {
-      for (let x = 0; x < bw; x++) {
-        if (y < 1) inBox[y * bw + x] = 1;
-        else outBox[y * bw + x] = 1;
+    const mask = eraseFrameBand(new Uint8Array(16 * 10).fill(1), 16, 10, 0, 0, { x: 0, y: 0, w: 16, h: 10 }, 2);
+    const geometry = p.geometry(mask, 16, 10);
+    const box = p.placeGlyph(geometry, wideGlyph, p.maxFont(geometry, wideGlyph, 1, 1), 1, 1)!;
+    expect(box.x).toBeGreaterThanOrEqual(2);
+    expect(box.y).toBeGreaterThanOrEqual(2);
+    expect(box.x + box.w).toBeLessThanOrEqual(14);
+    expect(box.y + box.h).toBeLessThanOrEqual(8);
+  });
+
+  it('matches exhaustive search for maximum scale, boundary clearance, and centering', () => {
+    const p = new LabelPlacer();
+    let seed = 1234;
+    for (let sample = 0; sample < 100; sample++) {
+      const mask = Uint8Array.from({ length: 25 }, () => {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        return seed % 5 ? 1 : 0;
+      });
+      const rooms: Array<{ x: number; y: number; w: number; h: number }> = [];
+      for (let y = 0; y < 5; y++) for (let x = 0; x < 5; x++) {
+        for (let h = 1; h <= 5 - y; h++) for (let w = 1; w <= 5 - x; w++) {
+          let filled = true;
+          for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) {
+            if (!mask[yy * 5 + xx]) filled = false;
+          }
+          if (filled) rooms.push({ x, y, w, h });
+        }
       }
+      const geometry = p.geometry(mask, 5, 5);
+      const cw = 1.4, ch = 0.7;
+      const expected = Math.max(...rooms.map((r) => Math.min(
+        r.w * cw / (3 + 2 * LABEL_PADDING_EM), r.h * ch / (1 + 2 * LABEL_PADDING_EM),
+      )));
+      expect(p.maxFont(geometry, wideGlyph, cw, ch)).toBeCloseTo(expected);
+      const size = expected * 0.7;
+      const box = p.placeGlyph(geometry, wideGlyph, size, cw, ch)!;
+      const halfW = size * (1.5 + LABEL_PADDING_EM), halfH = size * (0.5 + LABEL_PADDING_EM);
+      const cx = geometry.cx * cw, cy = geometry.cy * ch;
+      const candidates = rooms.filter((r) => r.w * cw >= halfW * 2 && r.h * ch >= halfH * 2).map((r) => {
+        const clearance = Math.min((r.w * cw - 3 * size) / 2, (r.h * ch - size) / 2);
+        const hx = Math.max(halfW, 3 * size / 2 + clearance);
+        const hy = Math.max(halfH, size / 2 + clearance);
+        const x = Math.max(r.x * cw + hx, Math.min(cx, (r.x + r.w) * cw - hx));
+        const y = Math.max(r.y * ch + hy, Math.min(cy, (r.y + r.h) * ch - hy));
+        return { clearance, distance: (x - cx) ** 2 + (y - cy) ** 2 };
+      });
+      const maxClearance = Math.max(...candidates.map((c) => c.clearance));
+      const minDistance = Math.min(...candidates.filter((c) => Math.abs(c.clearance - maxClearance) < 1e-7).map((c) => c.distance));
+      expect(((box.x + box.w / 2) * cw - cx) ** 2 + ((box.y + box.h / 2) * ch - cy) ** 2).toBeCloseTo(minDistance);
+      const actualClearance = Math.max(...rooms.map((r) => Math.min(
+        (box.x - r.x) * cw, (r.x + r.w - box.x - box.w) * cw,
+        (box.y - r.y) * ch, (r.y + r.h - box.y - box.h) * ch,
+      )));
+      expect(actualClearance).toBeCloseTo(maxClearance);
     }
-    const mask = preferLargerHalf(full, outBox, inBox);
-    const place = p.largestSlotInMask(mask, bw, bh, '16x9', bw / 2, bh / 2);
-    expect(place.area).toBeGreaterThan(0);
-    expect(place.y).toBeGreaterThanOrEqual(1);
-    expect(place.y + place.h).toBeLessThanOrEqual(bh);
-  });
-
-  it('erases the zoom-frame band so the slot sits in the remaining interior', () => {
-    const p = new LabelPlacer();
-    const bw = 16, bh = 10;
-    const full = new Uint8Array(bw * bh).fill(1);
-    const box = { x: 0, y: 0, w: 16, h: 10 };
-    const pad = 2;
-    const mask = eraseFrameBand(full, bw, bh, 0, 0, box, pad);
-    const place = p.largestSlotInMask(mask, bw, bh, '16x9', bw / 2, bh / 2);
-    expect(place.area).toBeGreaterThan(0);
-    expect(place.x).toBeGreaterThanOrEqual(pad);
-    expect(place.y).toBeGreaterThanOrEqual(pad);
-    expect(place.x + place.w).toBeLessThanOrEqual(bw - pad);
-    expect(place.y + place.h).toBeLessThanOrEqual(bh - pad);
   });
 });
 
 describe('pickSharedLabelFont', () => {
-  it('sizes the layer from typical slots and skips a much smaller one', () => {
+  it('omits a much smaller region and fits every remaining label', () => {
     const picked = pickSharedLabelFont([
-      { i: 0, score: 8, px: 4 },
-      { i: 1, score: 40, px: 18 },
-      { i: 2, score: 42, px: 20 },
-      { i: 3, score: 38, px: 16 },
+      { i: 0, area: 8, px: 4 },
+      { i: 1, area: 40, px: 18 },
+      { i: 2, area: 42, px: 20 },
+      { i: 3, area: 38, px: 16 },
     ], 0.55, 10);
     expect(picked.draw.has(0)).toBe(false);
     expect(picked.draw.has(1)).toBe(true);
     expect(picked.draw.has(2)).toBe(true);
     expect(picked.draw.has(3)).toBe(true);
-    expect(picked.fontSize).toBe(18);
+    expect(picked.fontSize).toBe(16);
   });
 
-  it('keeps every slot when sizes are similar', () => {
+  it('shrinks the shared font for awkward slots in regions of similar area', () => {
     const picked = pickSharedLabelFont([
-      { i: 0, score: 30, px: 14 },
-      { i: 1, score: 32, px: 16 },
-      { i: 2, score: 28, px: 12 },
+      { i: 0, area: 30, px: 14 },
+      { i: 1, area: 32, px: 16 },
+      { i: 2, area: 28, px: 3 },
     ], 0.55, 10);
     expect([...picked.draw].sort((a, b) => a - b)).toEqual([0, 1, 2]);
-    expect(picked.fontSize).toBe(14);
-  });
-});
-
-describe('pickMonthGlyph', () => {
-  it('keeps the full name when it fits the layer slot', () => {
-    expect(pickMonthGlyph('September', 20, { w: 120, h: 24 }, { w: 40, h: 30 }, 90, 28, true))
-      .toEqual({ text: 'September', short: false });
+    expect(picked.fontSize).toBe(3);
   });
 
-  it('falls back to three letters in the 4×3 when the full name does not fit', () => {
-    expect(pickMonthGlyph('September', 20, { w: 50, h: 24 }, { w: 40, h: 30 }, 90, 28, true))
-      .toEqual({ text: 'Sep', short: true });
-  });
-
-  it('uses the 4×3 abbrev when the full slot is an outlier', () => {
-    expect(pickMonthGlyph('February', 20, { w: 120, h: 24 }, { w: 40, h: 30 }, 70, 28, false))
-      .toEqual({ text: 'Feb', short: true });
-  });
-
-  it('stays unlabeled when neither box fits the layer font', () => {
-    expect(pickMonthGlyph('September', 40, { w: 50, h: 20 }, { w: 20, h: 15 }, 90, 28, true))
-      .toBeNull();
+  it('omits at most three tiny regions, choosing the smallest by area', () => {
+    const areas = [100, 8, 100, 5, 100, 7, 100, 4, 100, 6, 100];
+    const picked = pickSharedLabelFont(areas.map((area, i) => ({ i, area, px: area / 2 })), 0.55, 10);
+    expect(areas.map((_, i) => i).filter((i) => !picked.draw.has(i))).toEqual([3, 7, 9]);
+    expect(picked.fontSize).toBe(3.5);
   });
 });

@@ -1,48 +1,47 @@
 import {
   LABEL_ECHO_ALPHA, LABEL_ECHO_EMPTY_ALPHA, LABEL_ECHO_LIVE_ALPHA,
-  LABEL_FALLBACK_PX, LABEL_FIT_PAD, LABEL_FONT, LABEL_FONT_STACK,
-  LABEL_LIVE_MS, LABEL_MAX_PX, LABEL_OUTLIER_RATIO, LABEL_TINY_FRAC,
+  LABEL_FALLBACK_PX, LABEL_FONT, LABEL_FONT_STACK, LABEL_LIVE_MS, LABEL_MAX_PX, LABEL_TINY_FRAC,
 } from '../constants';
-import { LabelPlacer, cellInBox, eraseFrameBand, labelSlotKind, maskCentroid, pickMonthGlyph, pickSharedLabelFont, preferLargerHalf, zoomFramePadCells } from '../labels/LabelPlacer';
+import { LabelPlacer, eraseFrameBand, maskCentroid, pickSharedLabelFont, zoomFramePadCells, type GlyphMetrics, type LabelGeometry } from '../labels/LabelPlacer';
 import { monthAbbrev } from '../time/format';
-import { median } from '../math';
 import { innerCurId, pastColorAt, rampCurId, resolveInner, resolveRamp } from '../theme/pastRamp';
-import type { CellBox, LabelPlace, LabelSlotKind, MapLayout, ThemeColors, TimeUnit } from '../types';
+import type { CellBox, MapLayout, ThemeColors, TimeUnit } from '../types';
 
 export type LiveLabelCache = {
   slot: number;
   text: string;
-  place: LabelPlace;
+  geometry: LabelGeometry;
   ox: number;
   oy: number;
   onFilled: boolean;
-  kind: LabelSlotKind;
   zoomKey: string;
 };
 
-export type PinnedPlaces = Map<string, { place: LabelPlace; kind: LabelSlotKind }>;
+export type PinnedPlaces = Map<string, LabelGeometry>;
 
 type Pending = {
   text: string;
   n: number;
   live: boolean;
   onFilled: boolean;
-  placeMask: Uint8Array;
+  masks: Array<{ mask: Uint8Array; onFilled: boolean }>;
+  center: { x: number; y: number };
   bw: number;
   bh: number;
   ox: number;
   oy: number;
   color: string;
+  liveColors?: { filled: string; empty: string };
 };
 
 type Item = {
-  text: string;
   n: number;
   color: string;
-  place: LabelPlace;
+  liveColors?: { filled: string; empty: string };
+  geometry: LabelGeometry;
+  variants: Array<{ text: string; glyph: GlyphMetrics; maxFont: number }>;
   ox: number;
   oy: number;
-  shortPlace?: LabelPlace;
 };
 
 type LabelRegion = {
@@ -62,18 +61,17 @@ type LayerOpts = {
   hideLiveHour: boolean;
 };
 
-/** Draw unit labels: one slot kind per layer, pinned places in timelapse. */
+/** Fit the shared text scale, then maximize each label's clearance from its boundaries. */
 export class LabelRenderer {
   private regions = new WeakMap<MapLayout, Map<string, LabelRegion[]>>();
 
-  /** Bind the slot placer used for mask → rectangle. */
+  /** Bind the geometry solver used for mask → measured text. */
   constructor(private placer: LabelPlacer) {}
 
   /**
-   * Layer-wide slot (square / 4×3 / 16×9); one font from typical slots.
-   * Much-smaller slots stay unlabeled so they cannot shrink the rest.
-   * Months: full English name when it fits; else first three letters in a 4×3
-   * at the same layer font.
+   * One maximal font that fits all retained regions, using measured ink bounds.
+   * Only up to three much-smaller regions may stay unlabeled.
+   * Months: full English name when it fits; else first three letters.
    * Live glyph stays `--label-live*`. Other glyphs use the block fill plus `--label-*-alpha`.
    * On the inset, the parent unit is drawn first (faint, uncapped) under the local labels.
    */
@@ -147,7 +145,7 @@ export class LabelRenderer {
   }
 
   /**
-   * One unit: collect regions, place slots, draw. Echo passes `capPx: null` and weaker alphas.
+   * One unit: collect allowed regions, solve the layer size, center text, draw.
    */
   private paintLayer(
     ctx: CanvasRenderingContext2D,
@@ -168,21 +166,18 @@ export class LabelRenderer {
     if (!regions.length) return { liveLabel: opts.liveLabel, labelPlaces: opts.labelPlaces };
     const dur = grid.cellDur;
     const zoomBox = opts.zoomBox;
+    const framePad = zoomBox ? zoomFramePadCells(cw, ch) : 0;
     const pending: Pending[] = [];
-    const texts: string[] = [];
 
     for (let r = 0; r < regions.length; r++) {
       const region = regions[r];
       const t = cellStart[region.idx[0]] + dur * 0.5;
       const text = unit.label(t);
-      texts.push(text);
       const bw = region.maxx - region.minx + 1;
       const bh = region.maxy - region.miny + 1;
       const full = new Uint8Array(bw * bh);
       const past = new Uint8Array(bw * bh);
       const future = new Uint8Array(bw * bh);
-      const inBox = zoomBox ? new Uint8Array(bw * bh) : null;
-      const outBox = zoomBox ? new Uint8Array(bw * bh) : null;
       let nPast = 0, nFuture = 0, tMin = Infinity, tMax = -Infinity;
       for (let k = 0; k < region.idx.length; k++) {
         const i = region.idx[k];
@@ -200,24 +195,20 @@ export class LabelRenderer {
           future[mi] = 1;
           nFuture++;
         }
-        if (inBox && outBox && zoomBox) {
-          if (cellInBox(x, y, zoomBox)) inBox[mi] = 1;
-          else outBox[mi] = 1;
-        }
       }
       const live = now >= tMin && now < tMax;
-      const placed = this.placer.placeMaskForRegion({
-        timeLapse, live, unitId: unit.id, full, past, future, nPast, nFuture,
-      });
-      let placeMask = (inBox && outBox)
-        ? preferLargerHalf(placed.placeMask, outBox, inBox)
-        : placed.placeMask;
+      // Both backgrounds are candidates. Separate masks keep the glyph from
+      // crossing the fill front; area alone must not discard the better room.
+      const splitLive = live && !timeLapse && unit.id !== 'second' && nPast + nFuture > 0;
+      const onFilled = live ? nPast >= nFuture && nPast > 0 : tMax <= now;
+      let masks: Pending['masks'] = splitLive
+        ? [{ mask: past, onFilled: true }, { mask: future, onFilled: false }]
+        : [{ mask: full, onFilled }];
       if (zoomBox) {
-        placeMask = eraseFrameBand(placeMask, bw, bh, region.minx, region.miny, zoomBox, zoomFramePadCells(cw, ch));
+        masks = masks.map(({ mask, onFilled }) => ({
+          mask: eraseFrameBand(mask, bw, bh, region.minx, region.miny, zoomBox, framePad), onFilled,
+        }));
       }
-      let onFilled = tMax <= now;
-      if (live) onFilled = placed.onFilled;
-      else onFilled = tMax <= now;
       const sample = region.idx[0];
       const l1 = ids0Id(layout, sample);
       const inInner = onFilled && opts.innerUnitId === unit.id &&
@@ -229,16 +220,19 @@ export class LabelRenderer {
           : (curId != null && l1 === curId ? theme.curFuture : theme.future);
       pending.push({
         text, n: region.idx.length, live, onFilled,
-        placeMask, bw, bh,
+        masks, center: maskCentroid(full, bw, bh), bw, bh,
         ox: region.minx, oy: region.miny,
         color: this.placer.labelColor(theme, onFilled, live, fill, opts.alphas),
+        liveColors: splitLive ? {
+          filled: this.placer.labelColor(theme, true, true, fill, opts.alphas),
+          empty: this.placer.labelColor(theme, false, true, fill, opts.alphas),
+        } : undefined,
       });
     }
 
-    const kind = labelSlotKind(texts);
     const isMonth = unit.id === 'month';
     const liveSlot = Math.floor(now / LABEL_LIVE_MS);
-    const zoomKey = zoomBox ? zoomBox.x + ',' + zoomBox.y + ',' + zoomBox.w + 'x' + zoomBox.h : '';
+    const zoomKey = zoomBox ? zoomBox.x + ',' + zoomBox.y + ',' + zoomBox.w + 'x' + zoomBox.h + ':' + framePad : '';
     const items: Item[] = [];
     let nextLive = opts.liveLabel;
     let nextPlaces = opts.labelPlaces;
@@ -246,87 +240,82 @@ export class LabelRenderer {
       const p = pending[r];
       if (opts.hideLiveHour && p.live) continue;
       const placeKey = opts.keyPrefix + p.ox + ':' + p.oy + ':' + p.text + ':' + zoomKey;
-      const pinned = timeLapse && nextPlaces && nextPlaces.get(placeKey);
-      if (pinned && pinned.kind === kind) {
-        items.push(this.withMonthShort(p, { text: p.text, n: p.n, color: p.color, place: pinned.place, ox: p.ox, oy: p.oy }, isMonth));
-        continue;
-      }
+      let geometry = (timeLapse || !p.live) ? nextPlaces?.get(placeKey) : undefined;
       const cached = nextLive;
-      if (!timeLapse && p.live && cached && cached.slot === liveSlot && cached.text === p.text &&
+      if (!geometry && !timeLapse && p.live && cached && cached.slot === liveSlot && cached.text === p.text &&
           cached.ox === p.ox && cached.oy === p.oy &&
-          cached.onFilled === p.onFilled && cached.kind === kind && cached.zoomKey === zoomKey) {
-        items.push(this.withMonthShort(p, { text: p.text, n: p.n, color: p.color, place: cached.place, ox: cached.ox, oy: cached.oy }, isMonth));
-        continue;
+          cached.onFilled === p.onFilled && cached.zoomKey === zoomKey) {
+        geometry = cached.geometry;
       }
-      const mid = maskCentroid(p.placeMask, p.bw, p.bh);
-      const place = this.placer.largestSlotInMask(p.placeMask, p.bw, p.bh, kind, mid.x, mid.y);
-      const item = this.withMonthShort(p, { text: p.text, n: p.n, color: p.color, place, ox: p.ox, oy: p.oy }, isMonth);
+      if (!geometry) {
+        geometry = { cx: p.center.x, cy: p.center.y, rooms: p.masks.flatMap(({ mask, onFilled }) =>
+          this.placer.geometry(mask, p.bw, p.bh).rooms.map((room) => ({ ...room, onFilled })),
+        ) };
+      }
       if (!timeLapse && p.live) {
-        nextLive = { slot: liveSlot, text: p.text, place, ox: p.ox, oy: p.oy, onFilled: p.onFilled, kind, zoomKey };
+        nextLive = { slot: liveSlot, text: p.text, geometry, ox: p.ox, oy: p.oy, onFilled: p.onFilled, zoomKey };
       }
-      if (timeLapse) {
+      if (timeLapse || !p.live) {
         if (!nextPlaces) nextPlaces = new Map();
-        nextPlaces.set(placeKey, { place, kind });
+        nextPlaces.set(placeKey, geometry);
       }
-      items.push(item);
-    }
-
-    const med = median(items.map((it) => it.n));
-    const scored: Array<{ i: number; score: number; px: number }> = [];
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
-      const pr = it.place;
-      if (!pr || !pr.area || it.n < med * LABEL_TINY_FRAC) continue;
-      scored.push({
-        i,
-        score: Math.min(pr.w * cw, pr.h * ch),
-        px: this.placer.fontFit(ctx, it.text, pr.w * cw, pr.h * ch),
+      const texts = isMonth ? [p.text, monthAbbrev(p.text)] : [p.text];
+      const variants = texts.map((text) => {
+        const glyph = this.placer.measureGlyph(ctx, text);
+        return { text, glyph, maxFont: this.placer.maxFont(geometry, glyph, cw, ch) };
       });
+      items.push({ n: p.n, color: p.color, liveColors: p.liveColors, geometry, variants, ox: p.ox, oy: p.oy });
     }
-    const picked = pickSharedLabelFont(scored, LABEL_OUTLIER_RATIO, LABEL_FALLBACK_PX);
-    let fontSize = picked.fontSize;
-    if (opts.capPx != null) fontSize = Math.min(fontSize, opts.capPx);
 
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    const scored = items.map((it, i) => ({ i, area: it.n, px: Math.max(...it.variants.map((v) => v.maxFont)) }));
+    const picked = pickSharedLabelFont(scored, LABEL_TINY_FRAC, LABEL_FALLBACK_PX);
+    // Optical sizing makes system-font ink bounds nonlinear in font size.
+    // Reference metrics only bracket the search; every fit and the final
+    // placement use ink measured at the actual candidate size.
+    const measurements = new Map<number, Map<string, GlyphMetrics>>();
+    const glyphAt = (text: string, size: number): GlyphMetrics => {
+      let atSize = measurements.get(size);
+      if (!atSize) { atSize = new Map(); measurements.set(size, atSize); }
+      let glyph = atSize.get(text);
+      if (!glyph) { glyph = this.placer.measureGlyph(ctx, text, size); atSize.set(text, glyph); }
+      return glyph;
+    };
+    const fits = (size: number) => items.every((it, i) => !picked.draw.has(i) || it.variants.some((variant) =>
+      this.placer.maxFont(it.geometry, glyphAt(variant.text, size), cw, ch) + 1e-7 >= size,
+    ));
+    let upper = opts.capPx == null ? picked.fontSize : opts.capPx;
+    if (opts.capPx == null) while (fits(upper)) upper *= 2;
+    let fontSize = upper;
+    if (!fits(upper)) {
+      let lower = 0;
+      for (let iteration = 0; iteration < 20; iteration++) {
+        const middle = (lower + upper) / 2;
+        if (fits(middle)) lower = middle;
+        else upper = middle;
+      }
+      fontSize = lower;
+    }
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
     ctx.font = LABEL_FONT + fontSize + LABEL_FONT_STACK;
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
-      const pr = it.place;
-      if (!pr || !pr.area) continue;
-      if (it.n < med * LABEL_TINY_FRAC) continue;
-      let text = it.text;
-      let box = pr;
-      if (isMonth) {
-        const short = it.shortPlace && it.shortPlace.area ? it.shortPlace : null;
-        const glyph = pickMonthGlyph(
-          it.text, fontSize,
-          { w: pr.w * cw, h: pr.h * ch },
-          short ? { w: short.w * cw, h: short.h * ch } : null,
-          ctx.measureText(it.text).width,
-          ctx.measureText(monthAbbrev(it.text)).width,
-          picked.draw.has(i),
-        );
-        if (!glyph) continue;
-        text = glyph.text;
-        box = glyph.short && short ? short : pr;
-      } else {
-        if (!picked.draw.has(i)) continue;
-        const tw = ctx.measureText(it.text).width;
-        if (tw > pr.w * cw * LABEL_FIT_PAD || fontSize > pr.h * ch * LABEL_FIT_PAD) continue;
-      }
-      ctx.fillStyle = it.color;
-      ctx.fillText(text, (it.ox + box.x + box.w / 2) * cw, (it.oy + box.y + box.h / 2) * ch);
+      if (!picked.draw.has(i)) continue;
+      // Prefer the full name at the solved scale; an abbreviation is just another glyph.
+      const variant = it.variants.find((v) =>
+        this.placer.maxFont(it.geometry, glyphAt(v.text, fontSize), cw, ch) + 1e-7 >= fontSize,
+      )!;
+      const glyph = glyphAt(variant.text, fontSize);
+      const box = this.placer.placeGlyph(it.geometry, glyph, fontSize, cw, ch)!;
+      ctx.fillStyle = it.liveColors && box.onFilled != null
+        ? (box.onFilled ? it.liveColors.filled : it.liveColors.empty)
+        : it.color;
+      ctx.fillText(variant.text,
+        (it.ox + box.x + box.w / 2) * cw + (glyph.left - glyph.right) * fontSize / 2,
+        (it.oy + box.y + box.h / 2) * ch + (glyph.ascent - glyph.descent) * fontSize / 2);
     }
     return { liveLabel: timeLapse ? opts.liveLabel : nextLive, labelPlaces: nextPlaces };
-  }
-
-  /** 4×3 fallback slot for a month abbrev; same mask as the full-name place. */
-  private withMonthShort(p: Pending, item: Item, isMonth: boolean): Item {
-    if (!isMonth) return item;
-    const mid = maskCentroid(p.placeMask, p.bw, p.bh);
-    item.shortPlace = this.placer.largestSlotInMask(p.placeMask, p.bw, p.bh, '4x3', mid.x, mid.y);
-    return item;
   }
 
   /** Cells grouped by unit id, with a bounding box. Cached — the groups do not move. */
