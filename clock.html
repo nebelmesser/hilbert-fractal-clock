@@ -24,6 +24,7 @@
   <meta name="twitter:description" content="A clock that maps time onto a 2D Hilbert curve. Consecutive moments stay adjacent, so an interval appears as a compact region rather than scattered pixels.">
   <meta name="twitter:image" content="https://nebelmesser.com/hilbert/img/preview.png">
   <script type="module" src="./assets/clock.js"></script>
+  <link rel="modulepreload" href="./assets/shared-FrameStore.js">
   <link rel="stylesheet" href="./assets/clock.css">
 </head>
 <body class="fit-mode">
@@ -33,6 +34,7 @@
     <div class="arbitrary" id="arbitrary">
       <input type="date" id="arb-from">
       <input type="date" id="arb-to">
+      <a id="periods-link" class="periods-link" href="./periods.html">Periods</a>
     </div>
   </div>
   <div class="stage" id="stage">

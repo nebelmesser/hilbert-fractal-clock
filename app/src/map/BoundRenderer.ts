@@ -1,7 +1,9 @@
-import { BOUND_W, HAIR_GAIN, HAIR_MAX, HAIR_MIN, HAIR_REF_PX, INHERIT_W } from '../constants';
+import { BOUND_LUMA_SPLIT, BOUND_W, HAIR_GAIN, HAIR_MAX, HAIR_MIN, HAIR_REF_PX, INHERIT_W } from '../constants';
 import { clamp } from '../math';
 import { boundStrokeFromFill, innerCurId, pastColorAt, resolveInner, resolveRamp } from '../theme/pastRamp';
 import type { MapLayout, ThemeColors } from '../types';
+import { cellAppearance } from '../theme/mapAppearance';
+import { packedLuma } from '../theme/pastRamp';
 
 /** Flat edge list: cell index + CSS segment, 5 numbers per edge. */
 type EdgeList = number[];
@@ -11,6 +13,8 @@ type BoundGeom = {
   cssH: number;
   levels: EdgeList[];
   inherit: EdgeList[];
+  projection: MapLayout['periods'];
+  periods: EdgeList;
 };
 
 /** Stroke unit edges: local ladder plus inherited coarser units on the inset. */
@@ -75,6 +79,10 @@ export class BoundRenderer {
     const curFutureKey = 0x7ffffffe;
     const innerKey = 0x7ffffffd;
     const rec = this.geometry(layout, cssW, cssH);
+    const fillAt = layout.periods?.regions.length ? cellAppearance(layout, now, theme, curId) : null;
+    const contrastKey = (i: number) => packedLuma(fillAt!(i)) < BOUND_LUMA_SPLIT ? 0 : 1;
+    const contrastColor = (key: number, alpha: number) => key === 0
+      ? 'rgba(255,255,255,' + alpha + ')' : 'rgba(0,0,0,' + alpha + ')';
     for (let li = levels.length - 1; li >= 0; li--) {
       const cellsPer = Math.max(1, levels[li].typical / grid.cellDur);
       const sidePx = Math.sqrt(cellsPer) * Math.min(cw, ch);
@@ -85,6 +93,10 @@ export class BoundRenderer {
         : (BOUND_W[li] || BOUND_W[2]);
       const alpha = hair || li >= 2 ? theme.boundAlpha3 : (li === 0 ? theme.boundAlpha1 : theme.boundAlpha2);
       const edges = rec.levels[li];
+      if (fillAt) {
+        this.strokeEdges(ctx, edges, lw, contrastKey, (key) => contrastColor(key, alpha * 0.72));
+        continue;
+      }
       if (!ids0 || !colorAt) {
         this.strokeEdges(ctx, edges, lw, () => 0, () => boundStrokeFromFill(theme.future, alpha));
         continue;
@@ -114,21 +126,27 @@ export class BoundRenderer {
     }
     if (inherit) {
       for (let i = 0; i < inherit.length; i++) {
-        this.strokeEdges(ctx, rec.inherit[i], INHERIT_W, () => 0, () => theme.bound0);
+        if (fillAt) this.strokeEdges(ctx, rec.inherit[i], INHERIT_W, contrastKey, (key) => contrastColor(key, theme.boundAlpha1));
+        else this.strokeEdges(ctx, rec.inherit[i], INHERIT_W, () => 0, () => theme.bound0);
       }
     }
+    if (fillAt) this.strokeEdges(ctx, rec.periods, theme.periodBoundWidth, contrastKey,
+      (key) => contrastColor(key, theme.periodBoundAlpha));
   }
 
   /** Neighbour walk is cached per layout + CSS size; speedup only rekeys and restrokes. */
   private geometry(layout: MapLayout, cssW: number, cssH: number): BoundGeom {
     const { grid, levelIds, inherit } = layout;
     let rec = this.geom.get(layout);
-    if (rec && rec.cssW === cssW && rec.cssH === cssH) return rec;
+    if (rec && rec.cssW === cssW && rec.cssH === cssH && rec.projection === layout.periods) return rec;
+    const cw = cssW / grid.w, ch = cssH / grid.h;
     rec = {
       cssW,
       cssH,
       levels: levelIds.map((ids) => this.collectEdges(layout, cssW, cssH, ids)),
       inherit: inherit ? inherit.map((ids) => this.collectEdges(layout, cssW, cssH, ids)) : [],
+      projection: layout.periods,
+      periods: (layout.periods?.edges ?? []).map((value, i) => i % 5 === 0 ? value : value * (i % 5 === 1 || i % 5 === 3 ? cw : ch)),
     };
     this.geom.set(layout, rec);
     return rec;

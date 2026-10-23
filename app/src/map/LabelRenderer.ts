@@ -8,6 +8,9 @@ import { monthAbbrev } from '../time/format';
 import { median } from '../math';
 import { innerCurId, pastColorAt, rampCurId, resolveInner, resolveRamp } from '../theme/pastRamp';
 import type { CellBox, LabelPlace, LabelSlotKind, MapLayout, ThemeColors, TimeUnit } from '../types';
+import { findFreeTextPosition, glyphInk, glyphRect, PeriodLabels, textRectsOverlap, type TextRect } from '../periods/PeriodLabels';
+import { cellAppearance } from '../theme/mapAppearance';
+import { boundStrokeFromFill } from '../theme/pastRamp';
 
 export type LiveLabelCache = {
   slot: number;
@@ -33,6 +36,7 @@ type Pending = {
   ox: number;
   oy: number;
   color: string;
+  complete: boolean;
 };
 
 type Item = {
@@ -43,6 +47,7 @@ type Item = {
   ox: number;
   oy: number;
   shortPlace?: LabelPlace;
+  region?: Pending;
 };
 
 type LabelRegion = {
@@ -60,11 +65,14 @@ type LayerOpts = {
   innerId: number | null;
   innerUnitId: string | null;
   hideLiveHour: boolean;
+  reserved: readonly TextRect[];
+  fillAt: ((i: number) => number) | null;
 };
 
 /** Draw unit labels: one slot kind per layer, pinned places in timelapse. */
 export class LabelRenderer {
   private regions = new WeakMap<MapLayout, Map<string, LabelRegion[]>>();
+  private personal = new PeriodLabels();
 
   /** Bind the slot placer used for mask → rectangle. */
   constructor(private placer: LabelPlacer) {}
@@ -105,6 +113,8 @@ export class LabelRenderer {
     const innerId = innerCurId(layout, now);
     let nextPlaces = labelPlaces;
     let nextEcho = echoLive;
+    const fillAt = layout.periods?.regions.length ? cellAppearance(layout, now, theme, curId) : null;
+    const reserved = fillAt ? this.personal.paint(ctx, layout, cssW, cssH, zoomBox, theme, fillAt) : [];
 
     if (echo) {
       const painted = this.paintLayer(ctx, layout, echo.unit, echo.ids, cw, ch, now, theme, timeLapse, curId, colorAt, {
@@ -118,6 +128,7 @@ export class LabelRenderer {
         innerId,
         innerUnitId: inner ? inner.unit.id : null,
         hideLiveHour: false,
+        reserved, fillAt,
       });
       nextEcho = timeLapse ? echoLive : painted.liveLabel;
       nextPlaces = painted.labelPlaces;
@@ -138,6 +149,7 @@ export class LabelRenderer {
       innerId,
       innerUnitId: inner ? inner.unit.id : null,
       hideLiveHour: overlay && unit.id === 'hour',
+      reserved, fillAt,
     });
     return {
       liveLabel: timeLapse ? liveLabel : local.liveLabel,
@@ -206,6 +218,9 @@ export class LabelRenderer {
         }
       }
       const live = now >= tMin && now < tMax;
+      const unitStart = unit.start(t), unitEnd = unit.end(t);
+      const complete = tMin <= unitStart + dur && tMax >= unitEnd - dur &&
+        region.idx.length * dur >= unitEnd - unitStart - 2 * dur;
       const placed = this.placer.placeMaskForRegion({
         timeLapse, live, unitId: unit.id, full, past, future, nPast, nFuture,
       });
@@ -228,7 +243,7 @@ export class LabelRenderer {
           ? (colorAt ? colorAt(l1) : theme.past)
           : (curId != null && l1 === curId ? theme.curFuture : theme.future);
       pending.push({
-        text, n: region.idx.length, live, onFilled,
+        text, n: region.idx.length, live, onFilled, complete,
         placeMask, bw, bh,
         ox: region.minx, oy: region.miny,
         color: this.placer.labelColor(theme, onFilled, live, fill, opts.alphas),
@@ -294,9 +309,11 @@ export class LabelRenderer {
       const it = items[i];
       const pr = it.place;
       if (!pr || !pr.area) continue;
-      if (it.n < med * LABEL_TINY_FRAC) continue;
+      const complete = !!opts.fillAt && !!it.region?.complete;
+      if (it.n < med * LABEL_TINY_FRAC && !complete) continue;
       let text = it.text;
       let box = pr;
+      let needsRoom = false;
       if (isMonth) {
         const short = it.shortPlace && it.shortPlace.area ? it.shortPlace : null;
         const glyph = pickMonthGlyph(
@@ -305,24 +322,53 @@ export class LabelRenderer {
           short ? { w: short.w * cw, h: short.h * ch } : null,
           ctx.measureText(it.text).width,
           ctx.measureText(monthAbbrev(it.text)).width,
-          picked.draw.has(i),
+          picked.draw.has(i) || complete,
         );
-        if (!glyph) continue;
-        text = glyph.text;
-        box = glyph.short && short ? short : pr;
+        if (!glyph) {
+          if (!opts.fillAt || (!picked.draw.has(i) && !complete)) continue;
+          needsRoom = true;
+        } else {
+          text = glyph.text;
+          box = glyph.short && short ? short : pr;
+        }
       } else {
-        if (!picked.draw.has(i)) continue;
+        if (!picked.draw.has(i) && !complete) continue;
         const tw = ctx.measureText(it.text).width;
-        if (tw > pr.w * cw * LABEL_FIT_PAD || fontSize > pr.h * ch * LABEL_FIT_PAD) continue;
+        if (tw > pr.w * cw * LABEL_FIT_PAD || fontSize > pr.h * ch * LABEL_FIT_PAD) {
+          if (!opts.fillAt) continue;
+          needsRoom = true;
+        }
       }
-      ctx.fillStyle = it.color;
-      ctx.fillText(text, (it.ox + box.x + box.w / 2) * cw, (it.oy + box.y + box.h / 2) * ch);
+      let x = (it.ox + box.x + box.w / 2) * cw;
+      let y = (it.oy + box.y + box.h / 2) * ch;
+      const rect = glyphRect(ctx, text, x, y);
+      if (needsRoom || opts.reserved.some((reserved) => textRectsOverlap(rect, reserved))) {
+        const region = it.region;
+        const alternative = region && findFreeTextPosition(region.placeMask, region.bw, region.bh,
+          region.ox, region.oy, cw, ch, glyphInk(ctx, text), opts.reserved, x, y);
+        if (!alternative) continue;
+        x = alternative.x; y = alternative.y;
+      }
+      let color = it.color;
+      if (opts.fillAt && color !== theme.labelLive && color !== theme.labelLiveEmpty) {
+        const gx = Math.max(0, Math.min(grid.w - 1, Math.floor(x / cw)));
+        const gy = Math.max(0, Math.min(grid.h - 1, Math.floor(y / ch)));
+        const sample = g.at[gy * grid.w + gx];
+        if (sample >= 0 && sample < grid.cells) {
+          const alpha = opts.alphas ? (cellStart[sample] + dur <= now ? opts.alphas.filled : opts.alphas.empty)
+            : (cellStart[sample] + dur <= now ? theme.labelAlpha : theme.labelEmptyAlpha) * 0.8;
+          color = boundStrokeFromFill(opts.fillAt(sample), alpha);
+        }
+      }
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, y);
     }
     return { liveLabel: timeLapse ? opts.liveLabel : nextLive, labelPlaces: nextPlaces };
   }
 
   /** 4×3 fallback slot for a month abbrev; same mask as the full-name place. */
   private withMonthShort(p: Pending, item: Item, isMonth: boolean): Item {
+    item.region = p;
     if (!isMonth) return item;
     const mid = maskCentroid(p.placeMask, p.bw, p.bh);
     item.shortPlace = this.placer.largestSlotInMask(p.placeMask, p.bw, p.bh, '4x3', mid.x, mid.y);

@@ -29,6 +29,19 @@ The grid (`w × h` and the duration of one cell) is picked per range by a scorin
 pass that balances the aspect ratio of the available space, the number of cells,
 leftover cells, and whether a parent cell can still be refined down to ≤ 1 s.
 
+## Personal periods
+
+In **Range**, **Periods** opens a separate editor. Edit dates, a label (up to
+32 characters), and a color directly in the list; valid changes save in this
+browser. Both dates are included, so a period can be one day. **Add period**
+starts on the day after the preceding row ends and chooses an unused color
+from a muted palette. Click a color to pick a palette swatch or any custom color.
+
+Overlapping periods mix their colors independently of their order; future
+portions are dimmed. Their boundaries remain visible even where names cannot
+fit. Calendar labels use free space around the personal titles, testing the
+actual text bounds before hiding a label. Other presets use their normal map.
+
 ## Zoom
 
 A second panel refines one block of the parent map: the yellow box marks a

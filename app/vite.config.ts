@@ -14,10 +14,10 @@ export default defineConfig({
     emptyOutDir: false,
     sourcemap: false,
     rollupOptions: {
-      input: resolve(__dirname, 'clock.html'),
+      input: { clock: resolve(__dirname, 'clock.html'), periods: resolve(__dirname, 'periods.html') },
       output: {
-        entryFileNames: 'assets/clock.js',
-        chunkFileNames: 'assets/clock-[name].js',
+        entryFileNames: 'assets/[name].js',
+        chunkFileNames: 'assets/shared-[name].js',
         assetFileNames: 'assets/clock[extname]',
       },
     },

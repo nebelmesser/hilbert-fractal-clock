@@ -131,6 +131,40 @@ hour (`HH`) → minute (`HH:MM`) → second (`HH:MM:SS`) → ms100 → ms10 → 
 - Colors: `--label` / `--label-empty` / `--label-live` / `--label-live-empty`
   (muted, not translucent)
 
+## Personal periods (Range only)
+
+- **Periods** next to the Range dates opens `periods.html`.
+- The editor is a list of directly editable rows: color, label, inclusive start
+  and end dates. Labels are limited to 32 Unicode code points. Both dates are
+  required; future dates and a single-day period are allowed.
+- **Add period** appends an unnamed draft starting the calendar day after the
+  preceding row's end, with the same day as its initial end. The first row
+  defaults to today. Each new row gets a least-used color from ten muted
+  defaults; the row's color picker also accepts a custom color.
+- Valid row edits save automatically. An incomplete/invalid row keeps its last
+  saved values; an unnamed new row is not persisted. Removal offers Undo.
+- A separate versioned `clock-hilbert-periods` localStorage entry stores the
+  periods independently of the selected Range. Storage failures are reported.
+- Exact interval endpoints define segments with one or more period identities.
+  Overlaps use equal-weight mixing in linear RGB, independent of entry order.
+  Coarse cells integrate segment colors by duration; future portions use lower
+  brightness. The current cell retains its head color.
+- Both Range panels use the same interval model. Uncovered cells retain their
+  calendar fill. Period boundaries depend on membership, including when equal
+  colors meet or a title cannot be placed.
+- A personal title uses its whole original region, including overlapping areas.
+  Titles are muted (`--period-label-alpha`), without an outline. Positions are
+  cached per projection/size/zoom box.
+- Personal and calendar text collisions use measured glyph bounds, not period
+  bounds or line-height boxes. A calendar glyph that collides or cannot fit the
+  traditional square/landscape slot searches the rest of its allowed mask at the
+  same font size. Complete calendar units also try their full mask when their
+  slot is an outlier, so a narrow slot cannot discard a whole period. If no free
+  position exists, hide the glyph and keep boundaries. Tiny/cropped fragments
+  retain the existing filters. Personal title opacity is higher than calendar
+  label opacity.
+- Updates from another tab and returning to the clock refresh the period layer.
+
 ## Ranges and presets
 
 Buttons: **D** (today), **M** (month), **Y** (year), **Unix**, **Range**, then

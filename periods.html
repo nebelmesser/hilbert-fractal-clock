@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Periods · Hilbert Clock</title>
+  <meta name="description" content="Choose dates, labels and colors for your personal periods on the Hilbert Clock.">
+  <script type="module" src="./assets/periods.js"></script>
+  <link rel="modulepreload" href="./assets/shared-FrameStore.js">
+  <link rel="stylesheet" href="./assets/clock.css">
+</head>
+<body class="periods-page">
+  <main class="periods-main">
+    <header class="periods-header">
+      <a id="back-to-clock" href="./clock.html">← Back to clock</a>
+      <h1>Periods <span id="period-total" class="field-hint">0</span></h1>
+      <p>Shown in Range. Overlapping periods blend their colors.</p>
+    </header>
+    <div class="period-list-heading" aria-hidden="true"><span>Color</span><span>Label</span><span>From</span><span>To</span><span></span></div>
+    <p id="period-empty" class="period-empty">No periods yet.</p>
+    <ul id="period-list" class="period-list" aria-label="Periods"></ul>
+    <button id="period-add" class="period-primary" type="button">Add period</button>
+    <p class="period-storage-note">Changes are saved in this browser. Both dates included. Labels up to 32 characters.</p>
+    <div id="period-status" class="period-status" role="status" aria-live="polite"></div>
+    <p id="period-error" class="period-error" role="alert" hidden></p>
+  </main>
+</body>
+</html>

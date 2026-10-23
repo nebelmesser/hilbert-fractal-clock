@@ -9,6 +9,8 @@ export class Theme {
     overlay: '', overlayMaxPx: OVERLAY_MAX_PX, currentOutline: '', zoom: '',
     bound0: '',
     boundAlpha1: BOUND_ALPHA_1, boundAlpha2: BOUND_ALPHA_2, boundAlpha3: BOUND_ALPHA_3,
+    periodFutureBrightness: 0.18, periodBoundAlpha: 0.72, periodBoundWidth: 1.5,
+    periodLabelMinPx: 12, periodLabelMaxPx: 48, periodLabelAlpha: 0.5,
   };
 
   private probe: HTMLCanvasElement | null = null;
@@ -67,6 +69,12 @@ export class Theme {
       boundAlpha1: this.cssNumber('--bound-1-alpha', BOUND_ALPHA_1),
       boundAlpha2: this.cssNumber('--bound-2-alpha', BOUND_ALPHA_2),
       boundAlpha3: this.cssNumber('--bound-3-alpha', BOUND_ALPHA_3),
+      periodFutureBrightness: this.cssNumber('--period-future-brightness', 0.18),
+      periodBoundAlpha: this.cssNumber('--period-bound-alpha', 0.72),
+      periodBoundWidth: this.cssNumber('--period-bound-width', 1.5),
+      periodLabelMinPx: this.cssNumber('--period-label-min-px', 12),
+      periodLabelMaxPx: this.cssNumber('--period-label-max-px', 48),
+      periodLabelAlpha: this.cssNumber('--period-label-alpha', 0.5),
     };
     return this.colors;
   }

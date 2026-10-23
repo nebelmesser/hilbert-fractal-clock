@@ -1,4 +1,4 @@
-import { cellFillPixel, innerCurId, pastColorAt, resolveInner, resolveRamp } from '../theme/pastRamp';
+import { cellAppearance } from '../theme/mapAppearance';
 import type { MapLayout, ThemeColors } from '../types';
 
 type FillBuf = { w: number; h: number; img: ImageData; buf: Uint32Array };
@@ -20,25 +20,15 @@ export class FillRenderer {
     theme: ThemeColors,
     curId: number | null,
   ): void {
-    const { grid, g, cellStart } = layout;
+    const { grid, g } = layout;
     const rec = this.buffer(ctx, grid.w, grid.h);
     const buf = rec.buf;
     buf.fill(theme.surplus);
-    const { ids, minId, maxId, pinkId } = resolveRamp(layout, curId);
-    const inner = resolveInner(layout);
-    const innerId = innerCurId(layout, now);
-    const innerIds = inner ? inner.ids : null;
+    const colorAt = cellAppearance(layout, now, theme, curId);
     const n = grid.cells;
-    const dur = grid.cellDur;
-    const colorAt = ids ? pastColorAt(theme, minId, maxId, pinkId, curId) : null;
     for (let i = 0; i < n; i++) {
       const p = g.xs[i] + g.ys[i] * grid.w;
-      const t0 = cellStart[i];
-      const l1Id = ids ? ids[i] : 0;
-      buf[p] = cellFillPixel(
-        theme, now, t0, dur, l1Id, curId,
-        innerIds ? innerIds[i] : undefined, innerId, colorAt,
-      );
+      buf[p] = colorAt(i);
     }
     ctx.putImageData(rec.img, 0, 0);
   }

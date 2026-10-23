@@ -18,6 +18,8 @@ import { BoundRenderer } from './BoundRenderer';
 import { FillRenderer } from './FillRenderer';
 import { HighlightRenderer } from './HighlightRenderer';
 import { LabelRenderer, type LiveLabelCache, type PinnedPlaces } from './LabelRenderer';
+import { projectPeriods } from '../periods/PeriodProjection';
+import type { LifePeriod } from '../periods/PeriodStore';
 
 /** Shared curve / grid / theme / clock services used by a TimeMap. */
 export type MapHost = {
@@ -33,6 +35,7 @@ export type MapHost = {
   zoomWantArea: (grid: GridSpec) => number;
   currentZoomArea: () => number;
   currentZoomMs: () => number;
+  periods: () => readonly LifePeriod[];
 };
 
 /**
@@ -452,6 +455,11 @@ export class TimeMap {
   /** Fill along the curve up to now; tint the current coarsest unit; redraw labels. */
   tick(now: number, force = false): void {
     if (!this.layout) return;
+    const periods = this.host.periods();
+    if (this.layout.periods?.source !== periods && (periods.length || this.layout.periods)) {
+      this.layout.periods = periods.length ? projectPeriods(this.layout, periods, this.host.theme.colors) : undefined;
+      force = true;
+    }
     const { grid, levels, labelLevel } = this.layout;
     const paintMs = Math.max(1, Math.min(LOOP_MAX_MS, grid.cellDur));
     const nowKey = Math.floor(now / paintMs);

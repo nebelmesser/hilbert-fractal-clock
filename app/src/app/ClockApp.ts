@@ -16,6 +16,7 @@ import { TimeMap, type MapHost } from '../map/TimeMap';
 import { labels } from '../labels/LabelPlacer';
 import { clamp } from '../math';
 import { browserStorage, FrameStore } from '../persist/FrameStore';
+import { PERIODS_KEY, PeriodStore, type LifePeriod } from '../periods/PeriodStore';
 import { Theme } from '../theme/Theme';
 import { ClockTime } from '../time/ClockTime';
 import {
@@ -36,6 +37,9 @@ export class ClockApp {
   private readonly clock: ClockTime;
   private readonly theme = new Theme();
   private readonly store: FrameStore;
+  private readonly periodStore: PeriodStore;
+  private periods: LifePeriod[] = [];
+  private readonly noPeriods: LifePeriod[] = [];
   private readonly zoomLadder: ZoomLadder;
   private readonly layout: FitLayout;
   private readonly presets: PresetBar;
@@ -70,6 +74,8 @@ export class ClockApp {
   constructor() {
     this.clock = new ClockTime(location.search);
     this.store = new FrameStore(browserStorage());
+    this.periodStore = new PeriodStore(browserStorage());
+    this.periods = this.periodStore.load();
     this.zoomLadder = new ZoomLadder(curves, grids);
     this.stage = document.getElementById('stage')!;
     this.stackEl = document.getElementById('map-stack')!;
@@ -100,6 +106,7 @@ export class ClockApp {
       zoomWantArea: (grid) => this.zoomWantArea(grid),
       currentZoomArea: () => this.currentZoomArea(),
       currentZoomMs: () => this.currentZoomMs(),
+      periods: () => this.mode === 'arbitrary' ? this.periods : this.noPeriods,
     };
     this.bindEvents();
     this.boot();
@@ -693,6 +700,18 @@ export class ClockApp {
 
   /** Keyboard, resize, orientation, custom dates. */
   private bindEvents(): void {
+    const periodsLink = document.getElementById('periods-link') as HTMLAnchorElement;
+    periodsLink.href = './periods.html' + location.search;
+    const refreshPeriods = () => {
+      const periods = this.periodStore.load();
+      if (JSON.stringify(periods) === JSON.stringify(this.periods)) return;
+      this.periods = periods;
+      for (const slot of this.slots) slot.map.tick(this.clock.nowMs(), true);
+    };
+    window.addEventListener('storage', (event) => {
+      if (event.key === PERIODS_KEY || event.key === null) refreshPeriods();
+    });
+    window.addEventListener('pageshow', refreshPeriods);
     this.arbFrom.addEventListener('input', () => this.scheduleArbitraryApply());
     this.arbTo.addEventListener('input', () => this.scheduleArbitraryApply());
     document.addEventListener('fullscreenchange', () => this.syncFullscreenClass());

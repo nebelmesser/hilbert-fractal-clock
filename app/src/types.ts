@@ -1,3 +1,5 @@
+import type { PeriodProjection } from './periods/PeriodProjection';
+
 export type ModeId = 'today' | 'month' | 'year' | 'epoch' | 'arbitrary';
 
 export type CellBox = { x: number; y: number; w: number; h: number };
@@ -115,6 +117,7 @@ export type MapLayout = {
   inner?: { unit: TimeUnit; ids: Int32Array };
   /** Parent label unit, drawn large and faint under the inset's own labels. */
   echo?: { unit: TimeUnit; ids: Int32Array };
+  periods?: PeriodProjection;
 };
 
 export type LabelSlotKind = 'square' | '4x3' | '16x9';
@@ -145,6 +148,12 @@ export type ThemeColors = {
   boundAlpha1: number;
   boundAlpha2: number;
   boundAlpha3: number;
+  periodFutureBrightness: number;
+  periodBoundAlpha: number;
+  periodBoundWidth: number;
+  periodLabelMinPx: number;
+  periodLabelMaxPx: number;
+  periodLabelAlpha: number;
 };
 
 export type TimeRange = { start: number; end: number };
